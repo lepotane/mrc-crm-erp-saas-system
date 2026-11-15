@@ -157,6 +157,18 @@ Zamanlanmış görevler otomatik olarak şunları yürütür:
 
 ---
 
+## 🤝 Katkıda Bulunma
+
+Hata bildirimleri, iyileştirmeler ve geliştirmeler Pull Request (PR) üzerinden memnuniyetle kabul edilir.
+1. Projeyi Fork'layın
+2. Geliştirme dalı açın (`git checkout -b ozellik/yeni-ozellik`)
+3. Değişikliklerinizi commit'leyin (`git commit -m 'feat: yeni ozellik ekle'`)
+4. Dalınıza push edin (`git push origin ozellik/yeni-ozellik`)
+5. Bir Pull Request açın
+
+---
+
 ## 📄 Lisans
 
-Bu yazılım ticari mülkiyet lisansı altında dağıtılmaktadır. Tüm hakları saklıdır.
+Bu proje **GNU Genel Kamu Lisansı v3.0 (GPLv3)** altında lisanslanmış açık kaynaklı bir yazılımdır.
+Tüm lisans koşulları için [LICENSE](LICENSE) dosyasına göz atabilirsiniz.
