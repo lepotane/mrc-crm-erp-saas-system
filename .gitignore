@@ -1,0 +1,10 @@
+# Local build & artifact directories
+/mrc-yayin/
+/graphify-out/
+
+# Local scripts & tooling (kept locally, excluded from public repository)
+/scripts/
+
+# Internal documentation and tracking notes (kept locally, excluded from public repository)
+/docs/*.md
+!/docs/kilavuz/

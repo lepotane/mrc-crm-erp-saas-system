@@ -1,0 +1,308 @@
+@import 'tailwindcss';
+
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/plus-jakarta-sans/800.css';
+
+@source '../**/*.vue';
+@source '../**/*.js';
+@source '../**/*.blade.php';
+
+@theme {
+    --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+
+    --color-canvas: #191E2C;
+    --color-card: #212738;
+    --color-cardhover: #282F44;
+    --color-sunken: #131722;
+    --color-hairline: rgba(255, 255, 255, 0.08);
+
+    --color-brand: #B9FF66;
+
+    --color-violet: #BC5FCF;
+    --color-cyan: #459BBE;
+    --color-orange: #DC6F31;
+    --color-coral: #C55050;
+    --color-cobalt: #3D55B6;
+    --color-forest: #4E956A;
+
+    --color-ink: #FFFFFF;
+    --color-inksoft: #94A3B8;
+    --color-inkmut: #64748B;
+
+    --radius-card: 1rem;
+    --radius-panel: 1.5rem;
+    --radius-pill: 9999px;
+
+    --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+    --shadow-glow: 0 0 20px rgba(185, 255, 102, 0.25);
+    --shadow-neon: 0 0 24px rgba(185, 255, 102, 0.35);
+}
+
+body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 0.35s cubic-bezier(0.22, 1, 0.36, 1), color 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ==========================================================================
+   GÜNDÜZ MODU (LIGHT THEME) — Cihaz Varsayılanı veya Güneş/Ay Anahtarı ile Aktif
+   ========================================================================== */
+html.theme-light {
+    --color-canvas: #EEF2F7;
+    --color-card: #FFFFFF;
+    --color-cardhover: #F8FAFC;
+    --color-sunken: #F1F5F9;
+    --color-hairline: rgba(15, 23, 42, 0.09);
+    --color-ink: #0F172A;
+    --color-inksoft: #475569;
+    --color-inkmut: #64748B;
+}
+
+html.theme-light body {
+    background-color: #EEF2F7;
+    color: #0F172A;
+}
+
+html.theme-light .bg-\[\#191E2C\],
+html.theme-light .bg-\[\#191E2C\]\/95,
+html.theme-light .bg-\[\#191E2C\]\/90,
+html.theme-light .bg-\[\#191E2C\]\/80,
+html.theme-light .bg-\[\#191E2C\]\/70,
+html.theme-light .bg-\[\#0E121B\],
+html.theme-light .bg-\[\#171C29\] {
+    background-color: #EEF2F7 !important;
+}
+
+html.theme-light .bg-\[\#212738\],
+html.theme-light .bg-\[\#212738\]\/95,
+html.theme-light .bg-\[\#212738\]\/90,
+html.theme-light .bg-\[\#212738\]\/80,
+html.theme-light .bg-\[\#252C3F\],
+html.theme-light .bg-\[\#242B3D\] {
+    background-color: #FFFFFF !important;
+    box-shadow: 0 10px 28px -8px rgba(15, 23, 42, 0.08) !important;
+    border-color: rgba(15, 23, 42, 0.09) !important;
+}
+
+html.theme-light .bg-\[\#131722\],
+html.theme-light .bg-\[\#131722\]\/95,
+html.theme-light .bg-\[\#131722\]\/90,
+html.theme-light .bg-\[\#131722\]\/80,
+html.theme-light .bg-\[\#131722\]\/70,
+html.theme-light .bg-\[\#1E2434\],
+html.theme-light .bg-\[\#2A3146\]\/70,
+html.theme-light .bg-\[\#2A3146\]\/40,
+html.theme-light .bg-black\/40,
+html.theme-light .bg-black\/30,
+html.theme-light .bg-black\/25,
+html.theme-light .bg-black\/20 {
+    background-color: #F1F5F9 !important;
+    border-color: rgba(15, 23, 42, 0.12) !important;
+}
+
+/* --- Yazı renkleri -------------------------------------------------------
+   `text-white` iki yerde kullanılıyor:
+     (a) koyu kartların üstünde  → gündüzde kart beyaza döndüğü için yazı
+         KOYULAŞMALI;
+     (b) renkli rozet/çip/kartların üstünde → yazı BEYAZ KALMALI.
+   Ayrım yüzeye göre yapılır.
+
+   DİKKAT (specificity): koyulaştırma kuralı kasıtlı olarak `:where()` ile
+   düşük specificity'de yazıldı. Önceden `:not()` zinciri (3 adet) kullanıldığı
+   için istisna kurallarından DAHA YÜKSEK specificity'ye sahipti ve "beyaz kal"
+   kurallarını yeniyordu → gündüz modunda renkli kartların beyaz yazısı
+   koyulaşıyor (koyu zeminde koyu yazı = okunmaz).                      */
+html.theme-light :where(.text-white:not(.keep-white)) {
+    color: #0F172A !important;
+}
+
+/* (b) Renkli/koyu yüzeylerdeki beyaz yazı gündüzde de beyaz kalır.
+   - inline renkli kartlar (projeler, avatar halkaları, pasta dilimleri)
+   - gündüzde koyu kalan zeminler (koyu rozetler, koyu buton yüzeyleri)   */
+html.theme-light :where(
+    [style*="background-color"],
+    [style*="backgroundColor"],
+    .bg-\[\#0F1420\],
+    .bg-\[\#282F44\],
+    .bg-\[\#2B3245\],
+    .bg-\[\#2C3347\],
+    .bg-\[\#2E364F\],
+    .bg-\[\#323b55\],
+    .bg-\[\#353D54\],
+    .bg-\[\#363E57\],
+    .bg-\[\#3D55B6\],
+    .bg-\[\#4B66D1\],
+    .vivid-card
+) .text-white,
+html.theme-light :where(
+    [style*="background-color"],
+    [style*="backgroundColor"],
+    .bg-\[\#0F1420\],
+    .bg-\[\#282F44\],
+    .bg-\[\#2B3245\],
+    .bg-\[\#2C3347\],
+    .bg-\[\#2E364F\],
+    .bg-\[\#323b55\],
+    .bg-\[\#353D54\],
+    .bg-\[\#363E57\],
+    .bg-\[\#3D55B6\],
+    .bg-\[\#4B66D1\],
+    .vivid-card
+).text-white {
+    color: #FFFFFF !important;
+}
+
+/* keep-white: açıkça beyaz kalması istenen öğeler (rozet sayaçları, avatar
+   baş harfleri, aktif haplar). */
+html.theme-light .keep-white {
+    color: #FFFFFF !important;
+}
+
+html.theme-light .text-\[\#94A3B8\],
+html.theme-light .text-\[\#CBD5E1\] {
+    color: #475569 !important;
+}
+
+html.theme-light .text-\[\#64748B\] {
+    color: #64748B !important;
+}
+
+/* Gündüz modunda yüksek kontrastlı yeşil metin vurguları */
+html.theme-light .text-\[\#B9FF66\]:not(.bg-\[\#B9FF66\] *) {
+    color: #15803D !important;
+}
+
+html.theme-light .border-white\/10,
+html.theme-light .border-white\/15,
+html.theme-light .border-white\/\[0\.08\],
+html.theme-light .border-white\/\[0\.07\],
+html.theme-light .border-white\/\[0\.06\],
+html.theme-light .border-white\/\[0\.05\] {
+    border-color: rgba(15, 23, 42, 0.1) !important;
+}
+
+/* ==========================================================================
+   60 FPS GPU-HIZLANDIRMALI 3D PERSPEKTİF GEÇİŞLERİ & KART ANİMASYONLARI
+   (Lag/donma yaratan CPU blur filtreleri kaldırıldı; %100 GPU transform3d)
+   ========================================================================== */
+.perspective-stage {
+    perspective: 1400px;
+}
+
+.page-3d-enter-active {
+    transition:
+        opacity 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+        transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: center top;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+}
+
+.page-3d-leave-active {
+    transition:
+        opacity 0.18s cubic-bezier(0.4, 0, 1, 1),
+        transform 0.2s cubic-bezier(0.4, 0, 1, 1);
+    transform-origin: center bottom;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
+}
+
+.page-3d-enter-from {
+    opacity: 0;
+    transform: perspective(1400px) translate3d(0, 22px, -45px) rotateX(4deg) scale3d(0.98, 0.98, 1);
+}
+
+.page-3d-leave-to {
+    opacity: 0;
+    transform: perspective(1400px) translate3d(0, -14px, -30px) rotateX(-2.5deg) scale3d(0.985, 0.985, 1);
+}
+
+/* 3D Kart Etkileşimleri (Sıfır Layout Reflow, Saf GPU Katmanı) */
+.card-3d-interactive {
+    transform: translate3d(0, 0, 0);
+    backface-visibility: hidden;
+    transition:
+        transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+        border-color 0.22s ease;
+    will-change: transform;
+}
+
+.card-3d-interactive:hover {
+    transform: perspective(1000px) translate3d(0, -5px, 14px) rotateX(1.8deg) rotateY(-1.2deg);
+}
+
+@keyframes float3d {
+    0%, 100% {
+        transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg);
+    }
+    50% {
+        transform: translate3d(0, -5px, 10px) rotateX(1.5deg) rotateY(-1.5deg);
+    }
+}
+
+.animate-float-3d {
+    animation: float3d 5.5s ease-in-out infinite;
+    will-change: transform;
+    backface-visibility: hidden;
+}
+
+/* Sağ Üst Masaüstü Bildirim Popup Animasyonu */
+.notif-popup-enter-active {
+    transition:
+        opacity 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+        transform 0.36s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform, opacity;
+}
+.notif-popup-leave-active {
+    transition:
+        opacity 0.22s ease-in,
+        transform 0.24s ease-in;
+    will-change: transform, opacity;
+}
+.notif-popup-enter-from {
+    opacity: 0;
+    transform: perspective(900px) translate3d(60px, -12px, 20px) rotateY(-12deg) scale3d(0.94, 0.94, 1);
+}
+.notif-popup-leave-to {
+    opacity: 0;
+    transform: translate3d(80px, 0, 0) scale3d(0.95, 0.95, 1);
+}
+
+@keyframes notifShrinkBar {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+}
+.animate-notif-bar {
+    transform-origin: left center;
+    animation: notifShrinkBar 5.5s linear forwards;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: var(--color-sunken);
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.25);
+    border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.4);
+}
+
+/* Yatay hap şeritleri (üst hap nav): kayar ama çubuk göstermez. */
+.no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
