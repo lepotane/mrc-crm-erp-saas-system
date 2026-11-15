@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MRC Masaüstü (Pilot)</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.js" defer></script>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Giriş -->
+      <section id="view-login" class="card">
+        <h1>MRC Masaüstü <span class="pill">PİLOT</span></h1>
+        <p class="muted">API v1 ile konuşan ince istemci. İş mantığı sunucuda.</p>
+        <label>Sunucu adresi
+          <input id="api-base" type="text" spellcheck="false" />
+        </label>
+        <label>E-posta
+          <input id="email" type="email" autocomplete="username" />
+        </label>
+        <label>Şifre
+          <input id="password" type="password" autocomplete="current-password" />
+        </label>
+        <div id="challenge-box" class="hidden">
+          <label>Telefonundaki 6 haneli kod
+            <input id="code" type="text" inputmode="numeric" maxlength="16" placeholder="123 456" />
+          </label>
+        </div>
+        <p id="login-error" class="error"></p>
+        <button id="btn-login">Giriş yap</button>
+      </section>
+
+      <!-- Uygulama -->
+      <section id="view-app" class="hidden">
+        <header>
+          <div>
+            <h1 id="company-name">—</h1>
+            <p class="muted" id="user-line">—</p>
+          </div>
+          <button id="btn-logout" class="ghost">Çıkış</button>
+        </header>
+
+        <div class="grid">
+          <div class="card">
+            <h2>Cariler <button id="btn-refresh-parties" class="ghost small">Yenile</button></h2>
+            <p id="parties-error" class="error"></p>
+            <table>
+              <thead><tr><th>Kod</th><th>Ad</th><th>Tip</th><th>Açılış</th></tr></thead>
+              <tbody id="parties-body"></tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <h2>Bu cihaz (Rust köprüsü)</h2>
+            <pre id="device-info">yükleniyor…</pre>
+            <h2>Yazıcılar <span class="muted small">sessiz baskı kapısı</span></h2>
+            <p id="printers-error" class="error"></p>
+            <ul id="printers-list"></ul>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

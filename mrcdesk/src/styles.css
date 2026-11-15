@@ -1,0 +1,51 @@
+/* MRC Masaüstü pilotu — koyu kanvas, ana ürünle aynı dil (basitleştirilmiş). */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; min-height: 100vh; background: #191e2c; color: #fff;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  display: flex; justify-content: center; padding: 24px;
+}
+#app { width: 100%; max-width: 960px; }
+.hidden { display: none !important; }
+.card {
+  background: #131722; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 20px; padding: 24px; margin-bottom: 16px;
+}
+#view-login { max-width: 420px; margin: 8vh auto; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 14px; margin: 0 0 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: .06em; }
+.pill {
+  font-size: 10px; background: #b9ff66; color: #0b0e14; border-radius: 999px;
+  padding: 2px 8px; vertical-align: middle; font-weight: 800;
+}
+.muted { color: #94a3b8; font-size: 13px; }
+.small { font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+label { display: block; font-size: 12px; color: #94a3b8; margin: 12px 0 0; font-weight: 600; }
+input {
+  width: 100%; margin-top: 4px; padding: 10px 12px; background: #0f1420;
+  border: 1px solid rgba(255,255,255,.1); border-radius: 12px; color: #fff; font-size: 14px;
+}
+input:focus { outline: none; border-color: #b9ff66; }
+button {
+  margin-top: 16px; padding: 10px 18px; background: #b9ff66; color: #0b0e14;
+  border: none; border-radius: 999px; font-weight: 800; font-size: 14px; cursor: pointer;
+}
+button.ghost { background: transparent; color: #94a3b8; border: 1px solid rgba(255,255,255,.12); font-weight: 600; }
+button.small { margin-top: 0; padding: 4px 12px; font-size: 12px; }
+.error { color: #ffa0a0; font-size: 12px; min-height: 18px; margin: 8px 0 0; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+header button { margin-top: 0; }
+.grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: #64748b; font-size: 11px; text-transform: uppercase; padding: 6px 8px 6px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+td { padding: 7px 8px 7px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+.mono { font-family: ui-monospace, monospace; font-size: 12px; color: #94a3b8; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+pre {
+  background: #0f1420; border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
+  padding: 12px; font-size: 12px; overflow-x: auto;
+}
+ul { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+li { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
