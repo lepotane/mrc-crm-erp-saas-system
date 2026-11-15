@@ -1,0 +1,28 @@
+{
+    "key": "hedef-takip",
+    "name_tr": "Satış Kota & Hedef Takip Eklentisi",
+    "name_en": "Sales Quota & Target Tracking Extension",
+    "version": "1.1.0",
+    "permissions": [],
+    "routes": [],
+    "migrations": [],
+    "menu": ["/"],
+    "widgets": [
+        {
+            "key": "hedef_takip_widget",
+            "title_key": "Satış Kota & Hedef Takip",
+            "description_key": "Aylık/yıllık personel ve şube satış kotalarını ve hedef gerçekleşme yüzdelerini takip eder.",
+            "default_enabled": false,
+            "roles": ["Admin", "Personel"],
+            "size": "half"
+        }
+    ],
+    "config_schema": [
+        {
+            "key": "text",
+            "label_tr": "Hedef Notu",
+            "label_en": "Target Note",
+            "type": "textarea"
+        }
+    ]
+}

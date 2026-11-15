@@ -1,0 +1,28 @@
+{
+    "key": "notlar",
+    "name_tr": "Yazı Notları",
+    "name_en": "Quick Notes",
+    "version": "1.0.0",
+    "permissions": [],
+    "routes": [],
+    "migrations": [],
+    "menu": [],
+    "widgets": [
+        {
+            "key": "notlar",
+            "title_key": "Hızlı Not",
+            "description_key": "Firma notun pano üzerinde",
+            "default_enabled": true,
+            "roles": ["Admin", "Personel"],
+            "size": "half"
+        }
+    ],
+    "config_schema": [
+        {
+            "key": "text",
+            "label_tr": "Not metni",
+            "label_en": "Note text",
+            "type": "textarea"
+        }
+    ]
+}

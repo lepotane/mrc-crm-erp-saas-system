@@ -1,0 +1,28 @@
+{
+    "key": "duyuru-panosu",
+    "name_tr": "Şirket İçi Duyuru & Kampanya Bandı",
+    "name_en": "Internal Announcement & Campaign Banner",
+    "version": "1.0.0",
+    "permissions": [],
+    "routes": [],
+    "migrations": [],
+    "menu": ["/"],
+    "widgets": [
+        {
+            "key": "duyuru_panosu_widget",
+            "title_key": "Ekip Duyuru Panosu",
+            "description_key": "Tüm personele görünür canlı duyuru kartı",
+            "default_enabled": true,
+            "roles": ["Admin", "Personel"],
+            "size": "full"
+        }
+    ],
+    "config_schema": [
+        {
+            "key": "announcement",
+            "label_tr": "Duyuru Metni",
+            "label_en": "Announcement Text",
+            "type": "textarea"
+        }
+    ]
+}

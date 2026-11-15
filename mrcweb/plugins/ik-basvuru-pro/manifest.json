@@ -1,0 +1,28 @@
+{
+    "key": "ik-basvuru-pro",
+    "name_tr": "İK & CV Başvuru Havuzu Pro",
+    "name_en": "HR & CV Application Pool Pro",
+    "version": "1.2.0",
+    "permissions": [],
+    "routes": [],
+    "migrations": [],
+    "menu": ["/kullanicilar"],
+    "widgets": [
+        {
+            "key": "ik_basvuru_pro_widget",
+            "title_key": "İK & CV Başvuru Havuzu",
+            "description_key": "İş başvurularını değerlendirme, aday puanlama ve CV havuzu takibi.",
+            "default_enabled": true,
+            "roles": ["Admin"],
+            "size": "full"
+        }
+    ],
+    "config_schema": [
+        {
+            "key": "text",
+            "label_tr": "Başvuru Havuzu Notu",
+            "label_en": "Application Pool Note",
+            "type": "textarea"
+        }
+    ]
+}
