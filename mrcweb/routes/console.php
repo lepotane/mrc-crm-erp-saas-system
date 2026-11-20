@@ -38,3 +38,11 @@ Schedule::command('backup:clean')->dailyAt('03:00')->withoutOverlapping();
 Schedule::command('backup:monitor')->dailyAt('03:30')->withoutOverlapping();
 Schedule::command('bridge:prune')->dailyAt('04:30')->withoutOverlapping(); // V2-6: eski başarısız baskı işleri
 
+/*
+ | Entegrasyon katmanı (Tsoft / GİB / Luca).
+ | Tüm işler tek cron satırından beslenir; hiçbiri canlı mağazaya yazmaz
+ | (dry_run kapalı olmadıkça — config/integrations.php).
+ */
+Schedule::command('integration:outbox-relay')->everyMinute()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:gib-fetch-inbound')->hourly()->withoutOverlapping()->onOneServer();
+

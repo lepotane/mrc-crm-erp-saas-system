@@ -1,0 +1,357 @@
+<?php
+
+namespace App\Integration\Tsoft;
+
+use App\Integration\Canonical\CanonicalOrder;
+use App\Integration\Canonical\CanonicalPayment;
+use App\Integration\Canonical\CanonicalPrice;
+use App\Integration\Canonical\CanonicalStock;
+use App\Integration\Canonical\SyncResult;
+use Carbon\CarbonInterface;
+use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Throwable;
+
+/**
+ * Eski Tsoft rest1 API'si.
+ *
+ * Taban: https://<domain>/rest1/<class>/<method>
+ * Giriş: POST /rest1/auth/login (user/pass) -> token + expirationTime
+ * Token: her çağrıda POST parametresi olarak gönderilir.
+ *
+ * Hız sınırı: rest1 uçları ~3 dakikadan sık sorgulanmamalıdır; sipariş çekimi
+ * bu nedenle kısa ömürlü bir önbellekle yumuşatılır (bkz. fetchOrders).
+ */
+final class LegacyRest1Driver
+{
+    private const TOKEN_CACHE_PREFIX = 'tsoft:token:';
+
+    public function __construct(
+        private readonly int $companyId,
+        private readonly string $domain,
+        private readonly string $username,
+        private readonly string $password,
+    ) {}
+
+    /** @return array<int, CanonicalOrder> */
+    public function fetchOrders(?CarbonInterface $since = null, int $limit = 100): array
+    {
+        $limit = max(1, min(500, $limit));
+        $cacheKey = 'tsoft:orders:'.$this->companyId.':'.md5(($since?->toIso8601String() ?? 'all').':'.$limit);
+
+        // rest1 için ~3 dakikalık sorgulama aralığı (170 sn) korunur.
+        return Cache::remember($cacheKey, 170, function () use ($since, $limit): array {
+            $response = $this->post('/order/getOrders', [
+                'UpdateDateTimeStart' => $since?->format('Y-m-d H:i:s'),
+                'IsTransferred' => 0,
+                'Archive' => 0,
+            ]);
+
+            $this->assertSuccessful($response, 'Siparişler alınamadı');
+
+            $rows = $this->rows($response);
+            $orders = [];
+
+            foreach (array_slice($rows, 0, $limit) as $row) {
+                if (is_array($row)) {
+                    $orders[] = TsoftMapper::order($row);
+                }
+            }
+
+            return $orders;
+        });
+    }
+
+    public function fetchOrder(string $externalRef): ?CanonicalOrder
+    {
+        $response = $this->post('/order/getOrders', [
+            'OrderCode' => $externalRef,
+            'IsTransferred' => 0,
+            'Archive' => 0,
+        ]);
+
+        $this->assertSuccessful($response, 'Sipariş alınamadı');
+
+        foreach ($this->rows($response) as $row) {
+            if (is_array($row)) {
+                return TsoftMapper::order($row);
+            }
+        }
+
+        return null;
+    }
+
+    public function fetchStock(string $sku, ?string $warehouseCode = null): ?CanonicalStock
+    {
+        $response = $this->post('/product/getProducts', [
+            // rest1 tek seferde en fazla 500 ürün kabul eder.
+            'ProductCodes' => [$sku],
+        ]);
+
+        $this->assertSuccessful($response, 'Stok alınamadı');
+
+        foreach ($this->rows($response) as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $code = (string) ($row['ProductCode'] ?? $row['productCode'] ?? '');
+            if ($code === '' || $code === $sku) {
+                return TsoftMapper::stock($row, $warehouseCode ?? 'default', 'tsoft');
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * MRC stokun kaynağıdır; bu yazı Tsoft'a ayna (mirror) olarak gönderilir.
+     * rest1'de `expected` / iyimser kilitleme alanı YOKTUR — bu yüzden sürüm
+     * bilgisi iletilmez ve çakışma kontrolü yapılmaz.
+     */
+    public function pushStock(CanonicalStock $stock): SyncResult
+    {
+        try {
+            $response = $this->post('/product/setProducts', [
+                'products' => [[
+                    'ProductCode' => $stock->sku,
+                    'Stock' => $stock->quantity,
+                ]],
+            ]);
+
+            return $this->writeResult($response, $stock->sku, 'Stok aynalandı', 'Stok yazılamadı');
+        } catch (Throwable $e) {
+            return SyncResult::failure($this->safeException($e, 'Stok yazılamadı'));
+        }
+    }
+
+    public function pushPrice(CanonicalPrice $price): SyncResult
+    {
+        try {
+            $response = $this->post('/product/setProducts', [
+                'products' => [[
+                    'ProductCode' => $price->sku,
+                    'SellingPrice' => $price->salePrice,
+                    'Currency' => $price->currency,
+                ]],
+            ]);
+
+            return $this->writeResult($response, $price->sku, 'Fiyat yazıldı', 'Fiyat yazılamadı');
+        } catch (Throwable $e) {
+            return SyncResult::failure($this->safeException($e, 'Fiyat yazılamadı'));
+        }
+    }
+
+    public function pushPayment(CanonicalPayment $payment): SyncResult
+    {
+        try {
+            $response = $this->post('/order/setOrderPayment', [
+                'OrderCode' => $payment->orderRef,
+                'Amount' => $payment->amount,
+                'Currency' => $payment->currency,
+                'PaymentType' => $payment->method,
+                'TransactionNo' => $payment->transactionRef,
+            ]);
+
+            return $this->writeResult($response, $payment->externalRef, 'Ödeme yazıldı', 'Ödeme yazılamadı');
+        } catch (Throwable $e) {
+            return SyncResult::failure($this->safeException($e, 'Ödeme yazılamadı'));
+        }
+    }
+
+    public function pushShipment(CanonicalOrder $order): SyncResult
+    {
+        try {
+            $raw = $order->raw;
+            $response = $this->post('/order/setOrderCargo', [
+                'OrderCode' => $order->externalRef,
+                'CargoCompany' => (string) ($raw['CargoCompany'] ?? $raw['cargoCompany'] ?? ''),
+                'TrackingNumber' => (string) ($raw['TrackingNumber'] ?? $raw['cargoNumber'] ?? ''),
+            ]);
+
+            return $this->writeResult($response, $order->externalRef, 'Kargo yazıldı', 'Kargo yazılamadı');
+        } catch (Throwable $e) {
+            return SyncResult::failure($this->safeException($e, 'Kargo yazılamadı'));
+        }
+    }
+
+    public function pushStatus(string $externalRef, string $mrcStatus): SyncResult
+    {
+        try {
+            // Durum listesi uçtan okunur; MRC durumunu Tsoft durum koduna eşler.
+            $statusValue = $this->resolveStatus($mrcStatus);
+
+            $response = $this->post('/order/setOrderStatus', [
+                'OrderCode' => $externalRef,
+                'Status' => $statusValue,
+            ]);
+
+            return $this->writeResult($response, $externalRef, 'Durum yazıldı', 'Durum yazılamadı');
+        } catch (Throwable $e) {
+            return SyncResult::failure($this->safeException($e, 'Durum yazılamadı'));
+        }
+    }
+
+    private function resolveStatus(string $mrcStatus): string
+    {
+        try {
+            $response = $this->post('/order2/getOrderStatusList', []);
+            if (! $response->successful()) {
+                return $mrcStatus;
+            }
+
+            foreach ($this->rows($response) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+
+                $label = (string) ($row['Status'] ?? $row['Name'] ?? $row['name'] ?? '');
+                if ($label !== '' && strcasecmp($label, $mrcStatus) === 0) {
+                    return (string) ($row['Id'] ?? $row['id'] ?? $label);
+                }
+            }
+        } catch (Throwable) {
+            // Liste okunamazsa ham durum değeri gönderilir.
+        }
+
+        return $mrcStatus;
+    }
+
+    /** Token, süresinin 5 dakika öncesine kadar önbellekte tutulur. */
+    private function token(): string
+    {
+        $key = self::TOKEN_CACHE_PREFIX.$this->companyId;
+        $cached = Cache::get($key);
+
+        if (is_string($cached) && $cached !== '') {
+            return $cached;
+        }
+
+        $response = $this->http()
+            ->asForm()
+            ->post($this->baseUrl().'/auth/login', [
+                'username' => $this->username,
+                'password' => $this->password,
+            ]);
+
+        if (! $response->successful()) {
+            // Parola asla mesaja eklenmez.
+            throw new \RuntimeException('Tsoft rest1 girişi başarısız (HTTP '.$response->status().').');
+        }
+
+        $token = $response->json('token') ?? $response->json('Token');
+        if (! is_string($token) || $token === '') {
+            throw new \RuntimeException('Tsoft rest1 giriş yanıtında token bulunamadı.');
+        }
+
+        $expiration = $response->json('expirationTime') ?? $response->json('expiration_time');
+        $expiresAt = is_numeric($expiration)
+            ? (int) $expiration
+            : (is_string($expiration) ? (strtotime($expiration) ?: 0) : 0);
+        $ttl = max(60, ($expiresAt > 0 ? $expiresAt : time() + 3600) - time() - 300);
+
+        Cache::put($key, $token, $ttl);
+
+        return $token;
+    }
+
+    /** Token her çağrıda POST parametresi olarak eklenir. */
+    private function post(string $path, array $params = []): Response
+    {
+        $params['token'] = $this->token();
+
+        return $this->http()->asForm()->post($this->baseUrl().$path, $params);
+    }
+
+    /**
+     * CAVEAT: Http::retry(2, 200) yalnızca 429 ve 5xx için izin veren bir
+     * koşulla sınırlandırılmıştır; diğer 4xx yanıtları tekrar denenmez.
+     * Bağlantı hatasında yanıt olmadığı için yeniden deneme yapılmaz.
+     */
+    private function http(): PendingRequest
+    {
+        return Http::timeout(10)
+            ->connectTimeout(3)
+            ->retry(2, 200, function (Throwable $e): bool {
+                if (! $e instanceof RequestException || $e->response === null) {
+                    return false;
+                }
+
+                $status = $e->response->status();
+
+                return $status === 429 || $status >= 500;
+            });
+    }
+
+    private function baseUrl(): string
+    {
+        $domain = preg_replace('#^https?://#i', '', trim($this->domain));
+
+        return 'https://'.rtrim((string) $domain, '/').'/rest1';
+    }
+
+    /** @return array<int,mixed> */
+    private function rows(Response $response): array
+    {
+        $json = $response->json();
+
+        if (! is_array($json)) {
+            return [];
+        }
+
+        foreach (['Data', 'data', 'Orders', 'orders', 'Products', 'products'] as $key) {
+            if (isset($json[$key]) && is_array($json[$key])) {
+                return array_is_list($json[$key]) ? $json[$key] : [$json[$key]];
+            }
+        }
+
+        return array_is_list($json) ? $json : [];
+    }
+
+    private function assertSuccessful(Response $response, string $context): void
+    {
+        if (! $response->successful()) {
+            throw new \RuntimeException($this->failureDetail($response, $context));
+        }
+    }
+
+    private function writeResult(Response $response, string $externalRef, string $success, string $context): SyncResult
+    {
+        if (! $response->successful()) {
+            return SyncResult::failure($this->failureDetail($response, $context));
+        }
+
+        return SyncResult::success($externalRef, $success);
+    }
+
+    private function failureDetail(Response $response, string $context): string
+    {
+        $json = $response->json();
+        $detail = '';
+
+        if (is_array($json)) {
+            foreach (['message', 'Message', 'error', 'Error'] as $key) {
+                if (isset($json[$key]) && is_scalar($json[$key])) {
+                    $detail = (string) $json[$key];
+                    break;
+                }
+            }
+        }
+
+        $detail = (string) (TsoftMapper::mask(['detail' => $detail])['detail'] ?? '');
+
+        return $context.' (HTTP '.$response->status().')'.($detail !== '' ? ': '.mb_strcut($detail, 0, 300) : '');
+    }
+
+    private function safeException(Throwable $e, string $context): string
+    {
+        if ($e instanceof \RuntimeException && str_starts_with($e->getMessage(), $context)) {
+            return $e->getMessage();
+        }
+
+        return $context.' (HTTP isteği başarısız).';
+    }
+}

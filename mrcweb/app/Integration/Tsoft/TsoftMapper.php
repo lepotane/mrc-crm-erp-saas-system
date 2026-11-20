@@ -1,0 +1,254 @@
+<?php
+
+namespace App\Integration\Tsoft;
+
+use App\Integration\Canonical\CanonicalOrder;
+use App\Integration\Canonical\CanonicalOrderLine;
+use App\Integration\Canonical\CanonicalPrice;
+use App\Integration\Canonical\CanonicalProduct;
+use App\Integration\Canonical\CanonicalStock;
+use App\Integration\Enums\FieldSource;
+use Carbon\Carbon;
+use Carbon\CarbonInterface;
+use Throwable;
+
+/**
+ * Tsoft ham verisini kanonik DTO'lara çevirir.
+ *
+ * KVKK ilkesi: müşteri adı / e-posta / telefon / adres kanonik DTO'lara
+ * ASLA kopyalanmaz. Yalnızca `buyerTaxId` ve opak bir `buyerRef` (müşteri no)
+ * taşınır. `raw` alanı da maskelenerek saklanır.
+ *
+ * Para tutarları string decimal olarak üretilir (4 ondalık, nokta ayırıcı).
+ */
+final class TsoftMapper
+{
+    /**
+     * Hem legacy (rest1) hem admin (2026-01) sipariş şekillerini kabul eder.
+     * JSON:API kaynağı verilirse `attributes.*` yolları da okunur.
+     */
+    public static function order(array $raw): CanonicalOrder
+    {
+        $externalRef = (string) self::pick($raw, [
+            'OrderCode', 'orderNumber', 'id', 'attributes.orderNumber', 'attributes.id', 'externalRef',
+        ], '');
+
+        $orderNumberValue = self::pick($raw, [
+            'OrderNumber', 'orderNumber', 'attributes.orderNumber', 'orderNo',
+        ]);
+
+        $placedAt = self::date(self::pick($raw, [
+            'OrderDate', 'placedAt', 'createdAt', 'attributes.placedAt', 'attributes.createdAt', 'orderDate',
+        ]));
+
+        $lines = [];
+        $items = self::pick($raw, ['items', 'Items', 'Products', 'OrderProducts', 'products', 'attributes.items'], []);
+        if (is_array($items)) {
+            foreach ($items as $item) {
+                if (is_array($item)) {
+                    $lines[] = self::line($item);
+                }
+            }
+        }
+
+        // Maskelenmiş ham veri: hata ayıklama için yeterli, kişisel veri içermez.
+        $safeRaw = self::mask($raw);
+
+        return new CanonicalOrder(
+            $externalRef,
+            $orderNumberValue === null ? null : (string) $orderNumberValue,
+            strtoupper((string) self::pick($raw, [
+                'Currency', 'currency', 'currencyCode', 'attributes.currency', 'attributes.currencyCode',
+            ], 'TRY')),
+            // Toplam da kalemler gibi string decimal taşınır (float yuvarlaması yok).
+            self::decimal(self::pick($raw, [
+                'GrandTotal', 'TotalAmount', 'total', 'grandTotal', 'attributes.total', 'attributes.grandTotal',
+            ])),
+            (string) self::pick($raw, [
+                'Status', 'status', 'orderStatus', 'statusCode', 'attributes.status',
+            ], ''),
+            self::nullableString(self::pick($raw, [
+                'PaymentRef', 'paymentRef', 'paymentId', 'transactionId', 'attributes.paymentRef',
+            ])),
+            self::bool(self::pick($raw, ['IsPaid', 'isPaid', 'paid', 'attributes.isPaid'])),
+            $placedAt,
+            self::nullableString(self::pick($raw, [
+                'TaxNumber', 'buyerTaxId', 'taxId', 'VergiNo', 'TaxId', 'attributes.buyerTaxId', 'attributes.taxId',
+            ])),
+            self::nullableString(self::pick($raw, [
+                'CustomerId', 'buyerRef', 'customerId', 'buyer_id', 'attributes.buyerRef', 'attributes.customerId',
+            ])),
+            $lines,
+            $safeRaw,
+        );
+    }
+
+    public static function line(array $raw): CanonicalOrderLine
+    {
+        return new CanonicalOrderLine(
+            self::nullableString(self::pick($raw, [
+                'ProductCode', 'catalogCode', 'sku', 'Sku', 'productCode', 'wsSubProductCode',
+            ])),
+            // Ürün adıdır; müşteri kişisel verisi değildir.
+            self::nullableString(self::pick($raw, ['ProductName', 'productName', 'name', 'title'])),
+            self::decimal(self::pick($raw, ['Quantity', 'quantity', 'qty', 'attributes.quantity'])),
+            self::decimal(self::pick($raw, [
+                'SellingPrice', 'price', 'unitPrice', 'Price', 'attributes.price', 'attributes.unitPrice',
+            ])),
+            self::decimal(self::pick($raw, ['Vat', 'taxRate', 'vat', 'TaxRate', 'attributes.taxRate'])),
+            self::decimal(self::pick($raw, [
+                'Discount', 'discountRate', 'discount', 'attributes.discountRate',
+            ])),
+            self::nullableString(self::pick($raw, ['id', 'lineId', 'externalRef', 'OrderProductId'])),
+        );
+    }
+
+    public static function stock(
+        array $raw,
+        string $warehouseCode = 'default',
+        string $source = 'tsoft',
+        ?int $version = null,
+    ): CanonicalStock {
+        $versionValue = $version ?? self::pick($raw, ['version', 'Version', 'expected', 'attributes.version'], 0);
+
+        return new CanonicalStock(
+            (string) self::pick($raw, [
+                'ProductCode', 'catalogCode', 'sku', 'productSku', 'wsSubProductCode', 'attributes.sku',
+            ], ''),
+            (string) self::pick($raw, [
+                'WarehouseCode', 'warehouseCode', 'warehouseId', 'attributes.warehouseId',
+            ], $warehouseCode),
+            self::decimal(self::pick($raw, ['Stock', 'quantity', 'stock', 'available', 'attributes.quantity'])),
+            (int) $versionValue,
+            $source,
+            self::nullableString(self::pick($raw, ['id', 'productId', 'variantId', 'attributes.variantId', 'attributes.productId'])),
+        );
+    }
+
+    public static function price(array $raw): CanonicalPrice
+    {
+        $cost = self::pick($raw, ['CostPrice', 'costPrice', 'purchasePrice', 'attributes.costPrice']);
+
+        return new CanonicalPrice(
+            (string) self::pick($raw, [
+                'ProductCode', 'catalogCode', 'sku', 'attributes.sku',
+            ], ''),
+            strtoupper((string) self::pick($raw, [
+                'Currency', 'currency', 'currencyCode', 'attributes.currency',
+            ], 'TRY')),
+            self::decimal(self::pick($raw, [
+                'SellingPrice', 'salePrice', 'price', 'Price', 'attributes.salePrice',
+            ])),
+            ($cost === null || $cost === '') ? null : self::decimal($cost),
+            self::bool(self::pick($raw, ['IsActive', 'isActive', 'active', 'attributes.isActive']), true),
+        );
+    }
+
+    public static function product(array $raw): CanonicalProduct
+    {
+        $nameSource = self::pick($raw, ['nameSource', 'name_source', 'attributes.nameSource'], 'tsoft');
+        $imageSource = self::pick($raw, ['imageSource', 'image_source', 'attributes.imageSource'], 'tsoft');
+
+        return new CanonicalProduct(
+            (string) self::pick($raw, ['ProductCode', 'catalogCode', 'sku', 'attributes.sku'], ''),
+            self::nullableString(self::pick($raw, ['Barcode', 'barcode', 'Ean', 'attributes.barcode'])),
+            (string) self::pick($raw, ['ProductName', 'productName', 'name', 'title', 'attributes.name'], ''),
+            self::nullableString(self::pick($raw, ['Description', 'description', 'attributes.description'])),
+            self::nullableString(self::pick($raw, ['ImageUrl', 'imageUrl', 'image', 'Photo', 'attributes.imageUrl'])),
+            FieldSource::tryFrom(strtolower((string) $nameSource)) ?? FieldSource::Tsoft,
+            FieldSource::tryFrom(strtolower((string) $imageSource)) ?? FieldSource::Tsoft,
+            self::nullableString(self::pick($raw, ['CategoryId', 'categoryRef', 'category', 'attributes.categoryId'])),
+            self::nullableString(self::pick($raw, ['id', 'productId', 'externalRef'])),
+        );
+    }
+
+    /**
+     * Loglama öncesi kişisel veri ve sırları kırmızıya çeker.
+     * email|phone|address|name|token|secret|password ile eşleşen her anahtar
+     * (iç içe dizilerde dahil) "[REDACTED]" yapılır.
+     */
+    public static function mask(array $payload): array
+    {
+        $sensitive = '/(email|phone|address|name|token|secret|password)/i';
+        $out = [];
+
+        foreach ($payload as $key => $value) {
+            if (preg_match($sensitive, (string) $key) === 1) {
+                $out[$key] = '[REDACTED]';
+
+                continue;
+            }
+
+            $out[$key] = is_array($value) ? self::mask($value) : $value;
+        }
+
+        return $out;
+    }
+
+    /** Noktalı yolları da destekleyen "ilk dolu değer" seçici. */
+    private static function pick(array $data, array $keys, mixed $default = null): mixed
+    {
+        foreach ($keys as $key) {
+            $value = $data;
+
+            foreach (explode('.', (string) $key) as $segment) {
+                if (! is_array($value) || ! array_key_exists($segment, $value)) {
+                    $value = null;
+                    break;
+                }
+                $value = $value[$segment];
+            }
+
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return $default;
+    }
+
+    /** Para ve miktarlar için daima string decimal üretir. */
+    private static function decimal(mixed $value, string $default = '0'): string
+    {
+        if ($value === null || $value === '' || ! is_scalar($value) || ! is_numeric((string) $value)) {
+            return $default;
+        }
+
+        return (string) number_format((float) $value, 4, '.', '');
+    }
+
+    private static function nullableString(mixed $value): ?string
+    {
+        return ($value === null || $value === '') ? null : (string) $value;
+    }
+
+    private static function bool(mixed $value, bool $default = false): bool
+    {
+        if ($value === null || $value === '') {
+            return $default;
+        }
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return $value != 0;
+        }
+
+        return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'y', 'paid', 'ok'], true);
+    }
+
+    private static function date(mixed $value): ?CarbonInterface
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            $parsed = Carbon::parse((string) $value);
+
+            return $parsed instanceof CarbonInterface ? $parsed : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+}

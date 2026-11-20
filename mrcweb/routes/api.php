@@ -1,5 +1,8 @@
 <?php
 
+use App\Http\Controllers\Api\V1\IntegrationHealthController;
+use App\Http\Controllers\Api\V1\AccountantController;
+use App\Http\Controllers\Api\V1\IntegrationWebhookController;
 use App\Http\Controllers\Api\V1\CategoryController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AuditController;
@@ -96,6 +99,13 @@ Route::prefix('v1')->group(function () {
         Route::post('bridge/jobs/{job}/ack', [BridgeController::class, 'ack']);
         Route::post('bridge/rotate', [BridgeController::class, 'rotate']);
     });
+
+    /*
+    | Entegrasyon webhook'u — GİRİŞ İSTEMEZ, HMAC imzasıyla doğrulanır.
+    | Kiracı webhook gövdesinden/header'ından çözülür; ağır iş kuyruğa alınır.
+    */
+    Route::post('integrations/tsoft/webhook', [IntegrationWebhookController::class, 'handle'])
+        ->middleware('throttle:120,1');
 
     // Kimlikli uçlar
     // Kapalı modülün API yüzeyi `module.enabled` ile kapanır : yol öneki
@@ -285,6 +295,13 @@ Route::prefix('v1')->group(function () {
 
         // Faz 7 — Denetim kaydı : salt okunur, YALNIZ Admin.
         Route::get('audit', [AuditController::class, 'index']);
+
+        // Entegrasyon sağlık paneli (Tsoft / GİB / Luca) — kiracı bağlamlı, salt okunur.
+        Route::get('integrations/health', [IntegrationHealthController::class, 'index']);
+
+        // Mali müşavir paneli — fiş onayı, hesap eşleme, GİB dosyaları, Luca aktarımı.
+        Route::get('integrations/accountant', [AccountantController::class, 'index']);
+        Route::post('integrations/accountant/approve', [AccountantController::class, 'approve']);
 
         // Faz 3 — Raporlar (önbellekli: report.cache; yazma sonrası sürüm artar)
         Route::get('reports/sales-summary', [ReportController::class, 'salesSummary'])->middleware('report.cache');
