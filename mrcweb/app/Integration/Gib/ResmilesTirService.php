@@ -167,7 +167,13 @@ final class ResmilesTirService
 
     private function builderFor(string $type): VoucherBuilderInterface
     {
-        $builder = $this->voucherBuilders[$type] ?? $this->voucherBuilders['*'] ?? null;
+        // Injected array first (backward compatible), then the static registry
+        // by type and by wildcard, so no array autowiring is required.
+        $builder = $this->voucherBuilders[$type]
+            ?? $this->voucherBuilders['*']
+            ?? VoucherBuilderRegistry::resolve($type)
+            ?? VoucherBuilderRegistry::resolve('*')
+            ?? null;
         if (! $builder instanceof VoucherBuilderInterface) {
             throw new RuntimeException('No voucher builder registered for document type: '.$type.'.');
         }

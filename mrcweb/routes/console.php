@@ -45,4 +45,10 @@ Schedule::command('bridge:prune')->dailyAt('04:30')->withoutOverlapping(); // V2
  */
 Schedule::command('integration:outbox-relay')->everyMinute()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:gib-fetch-inbound')->hourly()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:tsoft-pull-orders')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:tsoft-push-stock')->everyFifteenMinutes()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:tsoft-push-price')->hourly()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:reconcile-stock')->hourly()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:reconcile-orders')->dailyAt('03:15')->withoutOverlapping()->onOneServer();
+Schedule::command('integration:accountant-reconcile')->weeklyOn(1, '04:00')->withoutOverlapping()->onOneServer();
 

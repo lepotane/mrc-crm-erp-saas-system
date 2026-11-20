@@ -21,6 +21,9 @@ return [
             'enabled' => env('MRC_TSOFT_ENABLED', false),
             'poll_minutes' => (int) env('MRC_TSOFT_POLL_MINUTES', 5),
             'max_per_minute' => (int) env('MRC_TSOFT_MAX_PER_MINUTE', 60),
+            'overlap_minutes' => (int) env('MRC_TSOFT_OVERLAP_MINUTES', 5),
+            'drift_limit' => (int) env('MRC_TSOFT_DRIFT_LIMIT', 100),
+            'currency' => env('MRC_TSOFT_DEFAULT_CURRENCY', 'TRY'),
         ],
         'gib' => [
             'enabled' => env('MRC_GIB_ENABLED', false),
