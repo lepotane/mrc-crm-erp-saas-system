@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\IntegrationPriceController;
 use App\Http\Controllers\Api\V1\IntegrationHealthController;
 use App\Http\Controllers\Api\V1\AccountantController;
 use App\Http\Controllers\Api\V1\IntegrationWebhookController;
@@ -298,6 +299,9 @@ Route::prefix('v1')->group(function () {
 
         // Entegrasyon sağlık paneli (Tsoft / GİB / Luca) — kiracı bağlamlı, salt okunur.
         Route::get('integrations/health', [IntegrationHealthController::class, 'index']);
+
+        // Fiyat senkronu: tek ürün / seçili ürünler / tüm ürünler, iki yönlü.
+        Route::post('integrations/prices/sync', [IntegrationPriceController::class, 'sync']);
 
         // Mali müşavir paneli — fiş onayı, hesap eşleme, GİB dosyaları, Luca aktarımı.
         Route::get('integrations/accountant', [AccountantController::class, 'index']);

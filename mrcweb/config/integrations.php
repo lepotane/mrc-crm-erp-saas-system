@@ -24,6 +24,8 @@ return [
             'overlap_minutes' => (int) env('MRC_TSOFT_OVERLAP_MINUTES', 5),
             'drift_limit' => (int) env('MRC_TSOFT_DRIFT_LIMIT', 100),
             'currency' => env('MRC_TSOFT_DEFAULT_CURRENCY', 'TRY'),
+            'payment_write_enabled' => env('MRC_TSOFT_PAYMENT_WRITE', false),
+            'payment_push_hours' => (int) env('MRC_TSOFT_PAYMENT_PUSH_HOURS', 24),
         ],
         'gib' => [
             'enabled' => env('MRC_GIB_ENABLED', false),

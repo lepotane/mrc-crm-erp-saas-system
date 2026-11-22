@@ -29,10 +29,12 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
 {
     private const OPERATIONS = [
         'fetch_orders',
+        'fetch_products',
         'fetch_stock',
         'push_stock',
         'push_price',
         'push_payment',
+        'push_payment_note',
         'push_shipment',
         'push_status',
     ];
@@ -73,6 +75,33 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
         return $this->driver()->fetchOrder($externalRef);
     }
 
+    /**
+     * Ürün fiyatlarını çözülmüş sürücüden okur; desteklenmiyorsa boş dizi.
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array<int,mixed>
+     */
+    public function fetchProducts(array $skus): array
+    {
+        try {
+            $driver = $this->driver();
+        } catch (Throwable) {
+            return [];
+        }
+
+        if (! is_object($driver) || ! method_exists($driver, 'fetchProducts')) {
+            return [];
+        }
+
+        try {
+            $rows = $driver->fetchProducts($skus);
+        } catch (Throwable) {
+            return [];
+        }
+
+        return is_array($rows) ? $rows : [];
+    }
+
     public function fetchStock(string $sku, ?string $warehouseCode = null): ?CanonicalStock
     {
         return $this->driver()->fetchStock($sku, $warehouseCode);
@@ -91,6 +120,20 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
     public function pushPayment(CanonicalPayment $payment): SyncResult
     {
         return $this->guard(fn () => $this->driver()->pushPayment($payment));
+    }
+
+    /** Doğrulanmış not yazımı; drivera göre ödeme yazımına da yönlendirilebilir. */
+    public function pushPaymentNote(CanonicalPayment $payment, ?string $note = null): SyncResult
+    {
+        return $this->guard(function () use ($payment, $note): SyncResult {
+            $driver = $this->driver();
+
+            if (! method_exists($driver, 'pushPaymentNote')) {
+                return SyncResult::failure('pushPaymentNote desteklenmiyor');
+            }
+
+            return $driver->pushPaymentNote($payment, $note);
+        });
     }
 
     public function pushShipment(CanonicalOrder $order): SyncResult

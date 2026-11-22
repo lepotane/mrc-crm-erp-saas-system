@@ -139,6 +139,112 @@ final class Admin2026Driver
     }
 
     /**
+     * Ürün fiyatlarını admin kataloğundan okur (ham diziler; eşleme TsoftMapper'da).
+     *
+     * Tercih edilen uç: GET /catalog/variants?filter[exact.wsSubProductCode]=<sku>.
+     * "exact" filtresi benzer SKU'ların yanlış eşleşmesini önler; varyant kaydı
+     * wsSubProductCode (SKU) ve fiyat alanlarını taşır. JSON:API `data`/`included`
+     * zarfı düz bir diziye indirgenir.
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchProducts(array $skus): array
+    {
+        $rows = [];
+
+        foreach ($skus as $sku) {
+            if (! is_scalar($sku)) {
+                continue;
+            }
+
+            $code = trim((string) $sku);
+            if ($code === '') {
+                continue;
+            }
+
+            $response = $this->send('GET', '/catalog/variants', [
+                'filter[exact.wsSubProductCode]' => $code,
+            ]);
+
+            if (! $response->successful()) {
+                continue;
+            }
+
+            $json = $response->json();
+            $data = is_array($json['data'] ?? null) ? $json['data'] : [];
+            $included = is_array($json['included'] ?? null) ? $json['included'] : [];
+
+            foreach ($data as $resource) {
+                if (is_array($resource)) {
+                    $rows[] = $this->flattenVariant($resource, $included);
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Eski çağrılar için takma ad: fiyat okuma aynı katalog uçtan gelir.
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchProductPrices(array $skus): array
+    {
+        return $this->fetchProducts($skus);
+    }
+
+    /** JSON:API varyant kaynağını ve ilişkili fiyatları düz bir diziye indirger. */
+    private function flattenVariant(array $resource, array $included): array
+    {
+        $flat = is_array($resource['attributes'] ?? null) ? $resource['attributes'] : $resource;
+        $flat['id'] ??= $resource['id'] ?? null;
+
+        if (! isset($flat['sku']) && isset($flat['wsSubProductCode'])) {
+            $flat['sku'] = (string) $flat['wsSubProductCode'];
+        }
+
+        $links = $resource['relationships']['prices']['data'] ?? [];
+        if (! is_array($links)) {
+            return $flat;
+        }
+
+        // JSON:API to-one / to-many ilişkisi olabilir.
+        if (isset($links['id'])) {
+            $links = [$links];
+        }
+
+        foreach ($links as $link) {
+            if (! is_array($link) || ! isset($link['id'])) {
+                continue;
+            }
+
+            foreach ($included as $entry) {
+                if (! is_array($entry) || ($entry['type'] ?? null) !== ($link['type'] ?? null)) {
+                    continue;
+                }
+
+                if ((string) ($entry['id'] ?? '') !== (string) $link['id']) {
+                    continue;
+                }
+
+                $price = is_array($entry['attributes'] ?? null) ? $entry['attributes'] : $entry;
+                foreach ($price as $key => $value) {
+                    if (! array_key_exists($key, $flat)) {
+                        $flat[$key] = $value;
+                    }
+                }
+
+                break;
+            }
+        }
+
+        return $flat;
+    }
+
+    /**
      * `expected` alanına CanonicalStock::version değeri yazılır (iyimser kilitleme).
      * MRC stokun kaynağıdır; Tsoft bu yazıyla aynalanır.
      */
@@ -218,6 +324,15 @@ final class Admin2026Driver
         } catch (Throwable $e) {
             return SyncResult::failure($this->safeException($e, 'Ödeme yazılamadı'));
         }
+    }
+
+    /**
+     * Admin API ödeme yazımını doğrudan destekler; not tabanlı çağrı da
+     * aynı uca yönlendirilir (rest1'deki setOrderNote bu API'de yoktur).
+     */
+    public function pushPaymentNote(CanonicalPayment $payment): SyncResult
+    {
+        return $this->pushPayment($payment);
     }
 
     public function pushShipment(CanonicalOrder $order): SyncResult

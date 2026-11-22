@@ -103,15 +103,23 @@ final class PriceSyncService
      * varsayılan mrc). Yeni para birimi satırı oluşturmak "ezmek" sayılmaz.
      *
      * @param  array<int,mixed>  $externalPrices
+     * @param  bool  $force  Yalnızca açıkça istendiğinde sahiplik kuralını aşar (kullanım loglanır).
      * @return array<string,mixed>
      */
-    public function pull(int $companyId, array $externalPrices): array
+    public function pull(int $companyId, array $externalPrices, bool $force = false): array
     {
         $ownership = $this->ownership ?? new FieldOwnership;
         $defaultCurrency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
         $upserted = 0;
         $skipped = 0;
         $rows = [];
+
+        if ($force) {
+            Log::warning('integration.price.pull.forced', [
+                'company_id' => $companyId,
+                'external_rows' => count($externalPrices),
+            ]);
+        }
 
         foreach ($externalPrices as $raw) {
             $price = $this->toCanonical($raw, $defaultCurrency);
@@ -139,10 +147,18 @@ final class PriceSyncService
                 ->where('currency_code', $currency)
                 ->first();
 
-            if ($existing !== null && ! $this->externalMayWritePrice($ownership, $companyId, $currency)) {
+            if ($existing !== null && ! $force && ! $this->externalMayWritePrice($ownership, $companyId, $currency)) {
                 $skipped++;
 
                 continue;
+            }
+
+            if ($force && $existing !== null) {
+                Log::warning('integration.price.pull.forced_overwrite', [
+                    'company_id' => $companyId,
+                    'sku' => $price->sku,
+                    'currency' => $currency,
+                ]);
             }
 
             $row = ProductPrice::updateOrCreate(
@@ -159,6 +175,228 @@ final class PriceSyncService
         }
 
         return ['upserted' => $upserted, 'skipped' => $skipped, 'rows' => $rows];
+    }
+
+    /**
+     * Kapsamlı MRC -> Tsoft fiyat gönderimi (tek / seçili / tüm ürünler).
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array{total:int,pushed:int,failed:int,skipped:int,details:array<int,array<string,mixed>>}
+     */
+    public function pushScoped(int $companyId, array $skus = [], bool $all = false, bool $force = false): array
+    {
+        if ($force) {
+            Log::info('integration.price.push.force_requested', ['company_id' => $companyId]);
+        }
+
+        $targets = $this->resolveSkus($companyId, $skus, $all);
+        if ($targets === null) {
+            return $this->failureSummary('Fiyat gönderimi için ürün seçilmedi (--sku veya --all gerekli).');
+        }
+
+        $summary = $this->emptySummary(count($targets));
+
+        foreach ($targets as $sku) {
+            try {
+                $result = $this->push($companyId, $sku);
+
+                if ($result->skipped) {
+                    $status = 'skipped';
+                    $summary['skipped']++;
+                } elseif ($result->ok) {
+                    $status = 'pushed';
+                    $summary['pushed']++;
+                } else {
+                    $status = 'failed';
+                    $summary['failed']++;
+                }
+
+                $message = $result->message;
+            } catch (Throwable) {
+                $status = 'failed';
+                $summary['failed']++;
+                $message = 'Fiyat gönderimi başarısız.';
+            }
+
+            $summary['details'][] = ['sku' => $sku, 'status' => $status, 'message' => $message];
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Kapsamlı Tsoft -> MRC fiyat çekimi (tek / seçili / tüm ürünler).
+     *
+     * Dış okuma yöntemi adapter üzerinde duck-typing ile çözülür; yoksa uydurma
+     * bir uç kullanılmaz, açık başarısızlık döndürülür.
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array{total:int,pushed:int,failed:int,skipped:int,details:array<int,array<string,mixed>>}
+     */
+    public function pullScoped(int $companyId, array $skus = [], bool $all = false, bool $force = false): array
+    {
+        $targets = $this->resolveSkus($companyId, $skus, $all);
+        if ($targets === null) {
+            return $this->failureSummary('Fiyat çekimi için ürün seçilmedi (--sku veya --all gerekli).');
+        }
+
+        $summary = $this->emptySummary(count($targets));
+
+        if (config('integrations.dry_run')) {
+            Log::info('integration.price.pull.skipped_dry_run', [
+                'company_id' => $companyId,
+                'skus' => count($targets),
+            ]);
+            $summary['skipped'] = count($targets);
+
+            foreach ($targets as $sku) {
+                $summary['details'][] = [
+                    'sku' => $sku,
+                    'status' => 'skipped',
+                    'message' => 'dry_run: dış fiyat okuma ve yerel yazım atlandı.',
+                ];
+            }
+
+            return $summary;
+        }
+
+        try {
+            $adapter = $this->adapter($companyId);
+        } catch (Throwable) {
+            return $this->failureSummary('Fiyat adapteri olusturulamadi.');
+        }
+
+        if (! is_object($adapter)) {
+            return $this->failureSummary('Fiyat adapteri kullanilamiyor.');
+        }
+
+        if (method_exists($adapter, 'fetchProducts')) {
+            $method = 'fetchProducts';
+        } elseif (method_exists($adapter, 'fetchProductPrices')) {
+            $method = 'fetchProductPrices';
+        } else {
+            return $this->failureSummary('Fiyat adapteri ürün fiyatı okumayı desteklemiyor (fetchProducts/fetchProductPrices yok).');
+        }
+
+        try {
+            $external = $adapter->{$method}($targets);
+        } catch (Throwable) {
+            return $this->failureSummary('Tsoft ürün fiyatları okunamadı.');
+        }
+
+        if (! is_array($external)) {
+            return $this->failureSummary('Tsoft ürün fiyatı yanıtı beklenen biçimde değil.');
+        }
+
+        $result = $this->pull($companyId, $external, $force);
+        $summary['pushed'] = (int) ($result['upserted'] ?? 0);
+        $summary['skipped'] = (int) ($result['skipped'] ?? 0);
+
+        $productIds = [];
+        foreach ($result['rows'] ?? [] as $row) {
+            if (is_array($row) && isset($row['product_id'])) {
+                $productIds[] = (int) $row['product_id'];
+            }
+        }
+
+        $skuById = [];
+        if ($productIds !== []) {
+            $skuById = Product::query()
+                ->where('company_id', $companyId)
+                ->whereIn('id', array_values(array_unique($productIds)))
+                ->pluck('sku', 'id')
+                ->all();
+        }
+
+        foreach ($result['rows'] ?? [] as $row) {
+            $productId = (int) ($row['product_id'] ?? 0);
+            $summary['details'][] = [
+                'sku' => (string) ($skuById[$productId] ?? ''),
+                'status' => 'pushed',
+                'message' => sprintf('%s fiyatı MRC\'ye alındı.', (string) ($row['currency_code'] ?? '')),
+            ];
+        }
+
+        if ($summary['skipped'] > 0) {
+            $summary['details'][] = [
+                'sku' => '',
+                'status' => 'skipped',
+                'message' => sprintf('%d fiyat satırı sahiplik kuralı nedeniyle atlandı.', $summary['skipped']),
+            ];
+        }
+
+        if ($summary['details'] === []) {
+            $summary['details'][] = [
+                'sku' => '',
+                'status' => 'info',
+                'message' => 'Tsoft tarafından bu ürünler için fiyat kaydı bulunamadı.',
+            ];
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Yön seçicisi: out = MRC -> Tsoft, in = Tsoft -> MRC.
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array{total:int,pushed:int,failed:int,skipped:int,details:array<int,array<string,mixed>>}
+     */
+    public function sync(int $companyId, string $direction, array $skus = [], bool $all = false, bool $force = false): array
+    {
+        return match (strtolower(trim($direction))) {
+            'out' => $this->pushScoped($companyId, $skus, $all, $force),
+            'in' => $this->pullScoped($companyId, $skus, $all, $force),
+            default => $this->failureSummary('Geçersiz senkronizasyon yönü: '.$direction.' (out|in beklenir).'),
+        };
+    }
+
+    /**
+     * @param  array<int,mixed>  $skus
+     * @return array<int,string>|null null: boş seçim (çağıran hata özeti döndürür)
+     */
+    private function resolveSkus(int $companyId, array $skus, bool $all): ?array
+    {
+        if ($all) {
+            return Product::query()
+                ->where('company_id', $companyId)
+                ->orderBy('sku')
+                ->pluck('sku')
+                ->map(fn ($sku) => (string) $sku)
+                ->filter(fn ($sku) => $sku !== '')
+                ->values()
+                ->all();
+        }
+
+        $normalized = [];
+        foreach ($skus as $sku) {
+            if (! is_scalar($sku)) {
+                continue;
+            }
+
+            $value = trim((string) $sku);
+            if ($value !== '') {
+                $normalized[$value] = $value;
+            }
+        }
+
+        return $normalized === [] ? null : array_values($normalized);
+    }
+
+    /** @return array{total:int,pushed:int,failed:int,skipped:int,details:array<int,array<string,mixed>>} */
+    private function emptySummary(int $total): array
+    {
+        return ['total' => $total, 'pushed' => 0, 'failed' => 0, 'skipped' => 0, 'details' => []];
+    }
+
+    /** @return array{total:int,pushed:int,failed:int,skipped:int,details:array<int,array<string,mixed>>} */
+    private function failureSummary(string $message): array
+    {
+        $summary = $this->emptySummary(0);
+        $summary['failed'] = 1;
+        $summary['details'][] = ['sku' => '', 'status' => 'failed', 'message' => $message];
+
+        return $summary;
     }
 
     private function externalMayWritePrice(FieldOwnership $ownership, int $companyId, string $currency): bool

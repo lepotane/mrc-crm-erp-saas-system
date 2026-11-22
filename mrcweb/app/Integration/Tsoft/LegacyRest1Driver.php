@@ -7,6 +7,7 @@ use App\Integration\Canonical\CanonicalPayment;
 use App\Integration\Canonical\CanonicalPrice;
 use App\Integration\Canonical\CanonicalStock;
 use App\Integration\Canonical\SyncResult;
+use App\Integration\Orders\PaymentBridgeService;
 use Carbon\CarbonInterface;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\RequestException;
@@ -108,6 +109,62 @@ final class LegacyRest1Driver
     }
 
     /**
+     * Ürün fiyatlarını rest1 uçundan okur (ham satırlar; eşleme TsoftMapper'da).
+     *
+     * Doğrulanmış uç: POST /rest1/product/getProducts — `ProductIds` en fazla
+     * 500 ürün için pipe ('|') ile ayrılmış liste bekler.
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchProducts(array $skus): array
+    {
+        $codes = [];
+        foreach ($skus as $sku) {
+            if (! is_scalar($sku)) {
+                continue;
+            }
+
+            $code = trim((string) $sku);
+            if ($code !== '') {
+                $codes[$code] = $code;
+            }
+        }
+
+        if ($codes === []) {
+            return [];
+        }
+
+        $rows = [];
+        foreach (array_chunk(array_values($codes), 500) as $chunk) {
+            $response = $this->post('/product/getProducts', [
+                'ProductIds' => implode('|', $chunk),
+            ]);
+
+            $this->assertSuccessful($response, 'Ürün fiyatları alınamadı');
+
+            foreach ($this->rows($response) as $row) {
+                if (is_array($row)) {
+                    $rows[] = $row;
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Eski çağrılar için takma ad: fiyat okuma aynı ürün uçtan gelir.
+     *
+     * @param  array<int,mixed>  $skus
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchProductPrices(array $skus): array
+    {
+        return $this->fetchProducts($skus);
+    }
+
+    /**
      * MRC stokun kaynağıdır; bu yazı Tsoft'a ayna (mirror) olarak gönderilir.
      * rest1'de `expected` / iyimser kilitleme alanı YOKTUR — bu yüzden sürüm
      * bilgisi iletilmez ve çakışma kontrolü yapılmaz.
@@ -145,6 +202,38 @@ final class LegacyRest1Driver
         }
     }
 
+    /**
+     * DOĞRULANMIŞ yazım yolu: POST /rest1/order2/setOrderNote (OrderId, Text).
+     * AdminId/CustomerId uç için pratikte opsiyoneldir; elimizde olmadığından
+     * payload'a eklenmez. Not metni kişisel veri ve sır içermez.
+     */
+    public function pushPaymentNote(CanonicalPayment $payment, ?string $note = null): SyncResult
+    {
+        try {
+            $text = $note !== null && trim($note) !== ''
+                ? PaymentBridgeService::sanitizeNote($note)
+                : PaymentBridgeService::buildNote($payment);
+
+            $response = $this->post('/order2/setOrderNote', [
+                'OrderId' => $payment->orderRef,
+                'Text' => mb_substr($text, 0, 500),
+            ]);
+
+            return $this->writeResult(
+                $response,
+                $payment->externalRef,
+                'Ödeme notu yazıldı',
+                'Ödeme notu yazılamadı',
+            );
+        } catch (Throwable $e) {
+            return SyncResult::failure($this->safeException($e, 'Ödeme notu yazılamadı'));
+        }
+    }
+
+    /**
+     * UYARI: `/order/setOrderPayment` bu kurulumda DOĞRULANMADI. Varsayılan
+     * ödeme yazım yolu olarak `pushPaymentNote()` kullanılmalıdır.
+     */
     public function pushPayment(CanonicalPayment $payment): SyncResult
     {
         try {
