@@ -88,6 +88,52 @@ final class LegacyRest1Driver
         return $orders;
     }
 
+    /** Tüm siparişler (arşivlenmiş/aktarılmış dahil) — tek seferlik tam aktarım için. */
+    public function fetchAllOrders(int $limit = 10000): array
+    {
+        $pageSize = 500;
+        $orders = [];
+        $seen = [];
+
+        for ($start = 0; $start < $limit; $start += $pageSize) {
+            $response = $this->post('/order/get', [
+                'limit' => min($pageSize, $limit - $start),
+                'start' => $start,
+            ]);
+
+            $this->assertSuccessful($response, 'Tüm siparişler alınamadı');
+
+            $rows = $this->rows($response);
+            if ($rows === []) {
+                break;
+            }
+
+            $fresh = 0;
+            foreach ($rows as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $code = (string) ($row['OrderCode'] ?? '');
+                $key = $code !== '' ? $code : md5(serialize($row));
+                if (isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $fresh++;
+                $orders[] = TsoftMapper::order($row);
+                if (count($orders) >= $limit) {
+                    break 2;
+                }
+            }
+
+            if ($fresh === 0 || count($rows) < $pageSize) {
+                break;
+            }
+        }
+
+        return $orders;
+    }
+
     public function fetchOrder(string $externalRef): ?CanonicalOrder
     {
         $response = $this->post('/order/get', [

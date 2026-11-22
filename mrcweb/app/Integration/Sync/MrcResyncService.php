@@ -157,7 +157,7 @@ final class MrcResyncService
                 // Herhangi bir aktarım hatası TÜM silme+içe aktarımı geri alır.
                 // Kısmi veri bırakmak üretimde kabul edilemez.
                 if ($report['errors'] !== []) {
-                    throw new \RuntimeException('İçe aktarma hatası; değişiklikler geri alındı.');
+                    throw new RuntimeException('İçe aktarma hatası; değişiklikler geri alındı.');
                 }
             });
 
@@ -368,7 +368,9 @@ final class MrcResyncService
         }
 
         try {
-            $rows = $adapter->fetchOrders(null, self::MAX_ORDERS);
+            $rows = method_exists($adapter, 'fetchAllOrders')
+                ? $adapter->fetchAllOrders(self::MAX_ORDERS)
+                : $adapter->fetchOrders(null, self::MAX_ORDERS);
         } catch (Throwable) {
             $report['errors'][] = 'Tsoft siparisleri okunamadi.';
 

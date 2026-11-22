@@ -66,6 +66,16 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
     }
 
     /** @return array<int, CanonicalOrder> */
+    public function fetchAllOrders(int $limit = 10000): array
+    {
+        $driver = $this->driver();
+
+        return method_exists($driver, 'fetchAllOrders')
+            ? $driver->fetchAllOrders($limit)
+            : $this->fetchOrders(null, $limit);
+    }
+
+    /** @return array<int, CanonicalOrder> */
     public function fetchOrders(?CarbonInterface $since = null, int $limit = 100): array
     {
         return $this->driver()->fetchOrders($since, $limit);
