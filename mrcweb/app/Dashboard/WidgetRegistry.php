@@ -304,9 +304,19 @@ class WidgetRegistry
             ->whereIn('status', ['confirmed', 'issued', 'partially_paid', 'paid', 'sent'])
             ->whereNotIn('id', $invoiceConvertedIds)
             ->whereNull('deleted_at')
+            // ID'ye gore "son 12" belge, takvimde gosterilen ayi hicbir zaman
+            // yakalayamiyordu. Vade yoksa belge tarihini kullanarak GERCEK
+            // tarih penceresinde filtrele (onceden hesaplanan $bugun/$bitis).
+            ->where(function ($q) use ($bugun, $bitis): void {
+                $q->whereBetween('due_date', [$bugun, $bitis])
+                    ->orWhere(function ($q2) use ($bugun, $bitis): void {
+                        $q2->whereNull('due_date')
+                            ->whereBetween('issue_date', [$bugun, $bitis]);
+                    });
+            })
             ->with('party:id,name')
-            ->orderByDesc('id')
-            ->limit(12)
+            ->orderByRaw('COALESCE(due_date, issue_date) ASC')
+            ->limit(200)
             ->get(['id', 'serial', 'type', 'status', 'party_id', 'grand_total', 'issue_date', 'due_date', 'currency_code']);
 
         $paidMap = static::paidMap($company, $docs->pluck('id')->all());

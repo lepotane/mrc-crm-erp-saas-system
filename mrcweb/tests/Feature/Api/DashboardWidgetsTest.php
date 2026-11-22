@@ -3,7 +3,9 @@
 namespace Tests\Feature\Api;
 
 use App\Models\DashboardWidget;
+use App\Models\Document;
 use App\Models\Invitation;
+use App\Models\Party;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\RegistersCompany;
 use Tests\TestCase;
@@ -225,5 +227,49 @@ class DashboardWidgetsTest extends TestCase
 
         $takvim = collect($izgara)->firstWhere('key', 'due_calendar');
         $this->assertSame([], $takvim['data']['items']);
+    }
+
+    public function test_takvim_gosterilen_aydaki_siparisleri_gosterir(): void
+    {
+        $party = Party::create([
+            'company_id' => $this->a['company_id'],
+            'type' => 'customer',
+            'code' => 'TS1',
+            'name' => 'Takvim Müşterisi',
+            'is_active' => true,
+        ]);
+
+        // Vadesi olmayan, bugunku tarihli Tsoft siparisi takvimde gorunmeli.
+        $bugun = Document::create([
+            'company_id' => $this->a['company_id'],
+            'type' => Document::TYPE_SALES_ORDER,
+            'serial' => 'SIP-TAKVIM-1',
+            'party_id' => $party->id,
+            'status' => 'confirmed',
+            'issue_date' => now()->format('Y-m-d'),
+            'currency_code' => 'EUR',
+            'grand_total' => 107.1,
+        ]);
+
+        // Ay disinda kalan bir belge takvimde yer almamali.
+        Document::create([
+            'company_id' => $this->a['company_id'],
+            'type' => Document::TYPE_SALES_ORDER,
+            'serial' => 'SIP-TAKVIM-ESKI',
+            'party_id' => $party->id,
+            'status' => 'confirmed',
+            'issue_date' => now()->subYears(3)->format('Y-m-d'),
+            'currency_code' => 'EUR',
+            'grand_total' => 10,
+        ]);
+
+        $izgara = $this->apiGet('/api/v1/dashboard/widgets', $this->a['headers'])
+            ->assertOk()->json('data');
+        $takvim = collect($izgara)->firstWhere('key', 'due_calendar');
+        $items = collect($takvim['data']['items']);
+
+        $this->assertTrue($items->contains('document_id', $bugun->id));
+        $this->assertFalse($items->contains('serial', 'SIP-TAKVIM-ESKI'));
+        $this->assertSame(now()->format('Y-m-d'), $items->firstWhere('document_id', $bugun->id)['due_date']);
     }
 }
