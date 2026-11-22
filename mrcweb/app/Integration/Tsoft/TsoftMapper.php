@@ -51,8 +51,32 @@ final class TsoftMapper
             }
         }
 
+        // rest1 order/get durum kimliğini ayrı bir alan olarak verir; etiket yerine
+        // daima bu kimliği (string) tercih et.
+        $statusId = (string) self::pick($raw, ['OrderStatusId'], '');
+        $paymentType = mb_strtolower(trim((string) self::pick($raw, ['PaymentType'], '')));
+        $kapida = str_contains($paymentType, 'kapida') || str_contains($paymentType, 'kapıda');
+
         // Maskelenmiş ham veri: hata ayıklama için yeterli, kişisel veri içermez.
         $safeRaw = self::mask($raw);
+        // Bu rest1 alanları kişisel veri değildir; maskeleme sonrası da açıkça
+        // korunur (durum kimliği ve para alanları sonraki adımlarda okunur).
+        foreach ([
+            'OrderSubtotal', 'DiscountTotal', 'OrderStatusId', 'IsInvoiced',
+            'InvoiceNumber', 'CargoTrackingCode', 'TransactionId',
+        ] as $field) {
+            if (array_key_exists($field, $raw)) {
+                $safeRaw[$field] = $raw[$field];
+            }
+        }
+
+        // Ödeme durumunda temkinliyiz: yalnızca faturalanmış, ödendiği bilinen
+        // durum kimlikleri (7/8/13) veya kapıda ödeme OLMAYAN bir ödeme tipi
+        // "ödendi" sayılır; diğer hallerde false kalır.
+        $isPaid = self::bool(self::pick($raw, ['IsPaid', 'isPaid', 'paid', 'attributes.isPaid']))
+            || self::bool(self::pick($raw, ['IsInvoiced', 'isInvoiced']))
+            || in_array($statusId, ['7', '8', '13'], true)
+            || ($paymentType !== '' && ! $kapida);
 
         return new CanonicalOrder(
             $externalRef,
@@ -61,22 +85,28 @@ final class TsoftMapper
                 'Currency', 'currency', 'currencyCode', 'attributes.currency', 'attributes.currencyCode',
             ], 'TRY')),
             // Toplam da kalemler gibi string decimal taşınır (float yuvarlaması yok).
+            // rest1 order/get'de gerçek sipariş toplamı OrderTotalPrice alanındadır.
             self::decimal(self::pick($raw, [
-                'GrandTotal', 'TotalAmount', 'total', 'grandTotal', 'attributes.total', 'attributes.grandTotal',
+                'OrderTotalPrice', 'GrandTotal', 'TotalAmount', 'total', 'grandTotal',
+                'attributes.total', 'attributes.grandTotal',
             ])),
             (string) self::pick($raw, [
-                'Status', 'status', 'orderStatus', 'statusCode', 'attributes.status',
+                'OrderStatusId', 'OrderStatus', 'Status', 'status', 'orderStatus',
+                'statusCode', 'attributes.status',
             ], ''),
             self::nullableString(self::pick($raw, [
-                'PaymentRef', 'paymentRef', 'paymentId', 'transactionId', 'attributes.paymentRef',
+                'TransactionId', 'PaymentRef', 'paymentRef', 'paymentId', 'transactionId', 'attributes.paymentRef',
             ])),
-            self::bool(self::pick($raw, ['IsPaid', 'isPaid', 'paid', 'attributes.isPaid'])),
+            $isPaid,
             $placedAt,
             self::nullableString(self::pick($raw, [
-                'TaxNumber', 'buyerTaxId', 'taxId', 'VergiNo', 'TaxId', 'attributes.buyerTaxId', 'attributes.taxId',
+                'TaxNumber', 'TaxNo', 'buyerTaxId', 'taxId', 'VergiNo', 'TaxId',
+                'attributes.buyerTaxId', 'attributes.taxId',
             ])),
+            // Müşteri kodu, müşteri kimliğinden daha kararlı bir opak referanstır.
             self::nullableString(self::pick($raw, [
-                'CustomerId', 'buyerRef', 'customerId', 'buyer_id', 'attributes.buyerRef', 'attributes.customerId',
+                'CustomerCode', 'CustomerId', 'buyerRef', 'customerId', 'buyer_id',
+                'attributes.buyerRef', 'attributes.customerId',
             ])),
             $lines,
             $safeRaw,

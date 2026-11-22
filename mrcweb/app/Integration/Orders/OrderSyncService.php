@@ -3,8 +3,10 @@
 namespace App\Integration\Orders;
 
 use App\Integration\Canonical\CanonicalOrder;
+use App\Integration\Canonical\CanonicalOrderLine;
 use App\Integration\Canonical\CanonicalPayment;
 use App\Integration\Canonical\SyncResult;
+use App\Integration\Enums\Channel;
 use App\Integration\Enums\SyncDirection;
 use App\Integration\Support\CredentialVault;
 use App\Integration\Sync\IntegrationIdMap;
@@ -24,6 +26,22 @@ use Throwable;
  */
 final class OrderSyncService
 {
+    /**
+     * Kiracı eşlemesi (integration_status_map) yoksa kullanılan bilinen Tsoft
+     * rest1 durum kimlikleri. Bunlar kanalın durum kodudur, gizli bilgi değildir.
+     * Yalnızca sales_order geçişlerine izin verilen değerlere çevrilir.
+     */
+    private const TSOFT_STATUS_FALLBACK = [
+        '6' => 'confirmed',  // Kargoya Verildi
+        '7' => 'confirmed',  // Ödeme Yapıldı
+        '8' => 'confirmed',  // Teslim Edildi
+        '12' => 'confirmed', // Onaylandı
+        '13' => 'confirmed', // Kapıda Ödeme Onaylandı
+        '9' => 'cancelled',  // İptal Edildi
+        '10' => 'cancelled', // İade Edildi
+        '11' => 'cancelled', // Kısmi İade Edildi
+    ];
+
     public function __construct(
         private readonly ?TsoftAdapter $adapter = null,
         private readonly ?StatusMapper $statusMapper = null,
@@ -54,11 +72,7 @@ final class OrderSyncService
                 }
             }
 
-            $mappedStatus = $this->statusMapper()->toMrc($companyId, $order->externalStatus);
-            // sales_order durum makinesi yalnızca bu üç durumu kabul eder.
-            $status = in_array($mappedStatus, ['draft', 'confirmed', 'cancelled'], true)
-                ? $mappedStatus
-                : 'draft';
+            $status = $this->resolveStatus($companyId, $order);
 
             $issueDate = $order->placedAt?->toDateString() ?? date('Y-m-d');
             $currency = $this->currency($order->currency);
@@ -92,7 +106,23 @@ final class OrderSyncService
                 'notes' => 'Tsoft siparişi (kanonik içe aktarım); kişisel veri taşınmaz.',
             ]);
 
-            foreach (array_values($order->lines) as $index => $line) {
+            $lines = array_values($order->lines);
+
+            // Tsoft rest1 order/get satır (ürün) dizisi döndürmez. Kalem gelmediği
+            // halde toplam > 0 ise belge toplamının kaybolmaması için tek bir
+            // "toplam" satırı oluşturulur; uydurma ürün/SKU bilgisi yazılmaz.
+            if ($lines === [] && bccomp(Money::dec($order->grandTotal), '0', Money::SCALE) > 0) {
+                $lines = [new CanonicalOrderLine(
+                    null,
+                    'Tsoft sipariş toplamı',
+                    '1',
+                    Money::dec($order->grandTotal),
+                    '0',
+                    '0',
+                )];
+            }
+
+            foreach ($lines as $index => $line) {
                 $subtotal = Money::mul($line->quantity, $line->unitPrice);
                 $discount = Money::percent($subtotal, $line->discountRate);
                 $net = Money::sub($subtotal, $discount);
@@ -400,6 +430,48 @@ final class OrderSyncService
         $value = strtoupper(trim($currency));
 
         return mb_substr($value !== '' ? $value : 'TRY', 0, 3);
+    }
+
+    /**
+     * Kiracı eşlemesi varsa StatusMapper sonucu (hard sınırla birlikte), yoksa
+     * bilinen Tsoft durum kimlikleri için yedek eşleme kullanılır.
+     */
+    private function resolveStatus(int $companyId, CanonicalOrder $order): string
+    {
+        $statusId = $this->statusId($order);
+        $mapped = $this->statusMapper()->toMrc($companyId, $statusId);
+
+        if ($this->hasStatusMap($companyId, $statusId)) {
+            // sales_order durum makinesi yalnızca bu üç durumu kabul eder.
+            return in_array($mapped, ['draft', 'confirmed', 'cancelled'], true)
+                ? $mapped
+                : 'draft';
+        }
+
+        return self::TSOFT_STATUS_FALLBACK[$statusId] ?? 'draft';
+    }
+
+    /** rest1'de yetkili kaynak OrderStatusId; yoksa kanonik durum alanı. */
+    private function statusId(CanonicalOrder $order): string
+    {
+        $rawId = is_array($order->raw ?? null)
+            ? trim((string) ($order->raw['OrderStatusId'] ?? ''))
+            : '';
+
+        return $rawId !== '' ? $rawId : trim((string) $order->externalStatus);
+    }
+
+    private function hasStatusMap(int $companyId, string $statusId): bool
+    {
+        if ($statusId === '') {
+            return false;
+        }
+
+        return StatusMap::query()
+            ->where('company_id', $companyId)
+            ->where('channel', Channel::Tsoft->value)
+            ->where('external_status', $statusId)
+            ->exists();
     }
 
     private function statusMapper(): StatusMapper
