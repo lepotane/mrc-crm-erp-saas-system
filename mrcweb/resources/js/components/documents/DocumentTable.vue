@@ -17,10 +17,12 @@
         </div>
 
         <div v-else class="overflow-x-auto -mx-4 sm:-mx-6 px-4 sm:px-6">
-            <table class="w-full text-sm min-w-[900px]">
+            <table class="w-full text-sm min-w-[1100px]">
                 <thead>
                     <tr class="text-left text-[11px] uppercase tracking-wider text-[#64748B] border-b border-white/[0.08]">
                         <th class="py-3 pr-3 font-semibold">{{ $t('Seri') }}</th>
+                        <th class="py-3 pr-3 font-semibold">{{ $t('Sipariş No') }}</th>
+                        <th class="py-3 pr-3 font-semibold">{{ $t('Ödeme / Kargo') }}</th>
                         <th class="py-3 pr-3 font-semibold">{{ $t('Cari') }}</th>
                         <th class="py-3 pr-3 font-semibold">{{ $t('Kesim') }}</th>
                         <th class="py-3 pr-3 font-semibold">{{ $t('Vade') }}</th>
@@ -37,6 +39,15 @@
                         class="hover:bg-white/[0.03] transition-colors cursor-pointer"
                     >
                         <td class="py-3 pr-3 font-mono text-xs text-[#94A3B8] whitespace-nowrap">{{ documentSerial(d) }}</td>
+                        <td class="py-3 pr-3 font-mono text-xs text-[#B6EAFF] whitespace-nowrap">{{ d.external_no || '—' }}</td>
+                        <td class="py-3 pr-3 whitespace-nowrap">
+                            <span
+                                v-if="channelSummary(d)"
+                                class="inline-block max-w-[170px] truncate px-2 py-0.5 rounded-md border border-white/10 bg-white/5 text-[11px] text-[#CBD5E1]"
+                                :title="channelSummary(d)"
+                            >{{ channelSummary(d) }}</span>
+                            <span v-else class="text-[#64748B]">—</span>
+                        </td>
                         <td class="py-3 pr-3 font-semibold text-white">{{ partyOf(d) }}</td>
                         <td class="py-3 pr-3 text-[#CBD5E1] whitespace-nowrap">{{ formatDate(d.issue_date) }}</td>
                         <td class="py-3 pr-3 text-[#CBD5E1] whitespace-nowrap">{{ formatDate(d.due_date) }}</td>
@@ -128,5 +139,24 @@ function partyOf(d) {
 }
 function totalOf(d) {
     return d.grand_total ?? d.total ?? d.totals?.grand_total ?? d.totals?.total ?? 0;
+}
+
+// channel_meta null/geçersiz/string olabilir — hepsi sessizce yok sayılır.
+function channelMetaOf(d) {
+    const meta = d?.channel_meta;
+    if (!meta) return null;
+    if (typeof meta === 'string') {
+        try { return JSON.parse(meta) || null; } catch { return null; }
+    }
+    return typeof meta === 'object' ? meta : null;
+}
+function channelSummary(d) {
+    const meta = channelMetaOf(d);
+    if (!meta) return '';
+    const parts = [];
+    if (meta.payment_method) parts.push(String(meta.payment_method));
+    if (meta.cargo_company) parts.push(String(meta.cargo_company));
+    if (meta.tracking_number) parts.push(String(meta.tracking_number));
+    return parts.join(' · ');
 }
 </script>

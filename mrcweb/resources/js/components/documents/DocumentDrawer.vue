@@ -37,6 +37,20 @@
                         </div>
                     </section>
 
+                    <!-- Dış kanal (Tsoft) metadata'sı: yalnızca teknik/opak alanlar, kişisel veri yok. -->
+                    <section v-if="channelMeta" class="p-4 bg-[#131722] rounded-2xl border border-white/10 space-y-2">
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-[#94A3B8]">{{ $t('Kanal') }}</h4>
+                        <div class="grid grid-cols-2 gap-2 text-xs">
+                            <div v-if="doc.external_no" class="text-[#94A3B8]">{{ $t('Sipariş No') }}: <span class="text-white font-mono">{{ doc.external_no }}</span></div>
+                            <div v-if="channelMeta.payment_method" class="text-[#94A3B8]">{{ $t('Ödeme yöntemi') }}: <span class="text-white">{{ channelMeta.payment_method }}</span></div>
+                            <div v-if="channelMeta.payment_bank || channelMeta.payment_vendor || channelMeta.payment_card_brand" class="text-[#94A3B8]">{{ $t('Banka / Kart') }}: <span class="text-white">{{ [channelMeta.payment_bank, channelMeta.payment_vendor, channelMeta.payment_card_brand].filter(Boolean).join(' · ') }}</span></div>
+                            <div v-if="channelMeta.payment_transaction_id" class="text-[#94A3B8]">{{ $t('İşlem No') }}: <span class="text-white font-mono">{{ channelMeta.payment_transaction_id }}</span></div>
+                            <div v-if="channelMeta.cargo_company" class="text-[#94A3B8]">{{ $t('Kargo firması') }}: <span class="text-white">{{ channelMeta.cargo_company }}</span></div>
+                            <div v-if="channelMeta.tracking_number" class="text-[#94A3B8]">{{ $t('Takip No') }}: <span class="text-white font-mono">{{ channelMeta.tracking_number }}</span></div>
+                            <div v-if="channelMeta.invoice_no" class="text-[#94A3B8]">{{ $t('Fatura No') }}: <span class="text-white font-mono">{{ channelMeta.invoice_no }}</span></div>
+                        </div>
+                    </section>
+
                     <section class="p-4 bg-[#131722] rounded-2xl border border-white/10 space-y-2.5">
                         <h4 class="text-xs font-bold uppercase tracking-wider text-[#94A3B8]">{{ docT('Satırlar') }} ({{ lines.length }})</h4>
 
@@ -212,6 +226,19 @@ const pdfLang = ref('tr');
 const docT = (key, params) => tIn(pdfLang.value, key, params || {});
 
 const lines = computed(() => props.doc?.lines || props.doc?.items || []);
+
+// Kanal metadata'sı backend'den dizi ya da JSON string gelebilir; ikisini de
+// kabul eder, bozuk/null değerde bölümü gizler.
+const channelMeta = computed(() => {
+    const raw = props.doc?.channel_meta;
+    if (!raw) return null;
+    let parsed = raw;
+    if (typeof raw === 'string') {
+        try { parsed = JSON.parse(raw); } catch { return null; }
+    }
+    if (!parsed || typeof parsed !== 'object') return null;
+    return Object.keys(parsed).length ? parsed : null;
+});
 
 /* --- Fiyat sınıfı (para birimi bazlı çoklu fiyat) --- */
 const PARA_BIRIMLERI = ['TRY', 'USD', 'EUR', 'GBP'];

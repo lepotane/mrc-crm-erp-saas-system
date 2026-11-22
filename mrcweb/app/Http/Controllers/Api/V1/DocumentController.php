@@ -1085,6 +1085,9 @@ class DocumentController extends Controller
             'id' => $document->id,
             'type' => $document->type,
             'serial' => $document->serial,
+            // Kanal (Tsoft) sipariş numarası + ödeme/kargo metadata'sı.
+            'external_no' => $document->external_no,
+            'channel_meta' => $this->decodeChannelMeta($document),
             'status' => $document->status,
             'issue_date' => $document->issue_date?->format('Y-m-d'),
             'due_date' => $document->due_date?->format('Y-m-d'),
@@ -1108,7 +1111,7 @@ class DocumentController extends Controller
     protected function present(Document $document): array
     {
         $data = $document->only([
-            'id', 'company_id', 'type', 'serial', 'status',
+            'id', 'company_id', 'type', 'serial', 'external_no', 'status',
             'currency_code', 'exchange_rate', 'rate_date',
             'subtotal', 'discount_total', 'tax_total', 'grand_total',
             'party_id', 'warehouse_id', 'notes', 'converted_from_id', 'source_document_id',
@@ -1118,6 +1121,8 @@ class DocumentController extends Controller
         $data['issue_date'] = $document->issue_date?->format('Y-m-d');
         $data['due_date'] = $document->due_date?->format('Y-m-d');
         $data['rate_date'] = $document->rate_date?->format('Y-m-d');
+        // JSON kolon modelde cast'li olmadığı için ham string'i diziye çeviririz.
+        $data['channel_meta'] = $this->decodeChannelMeta($document);
         $data['party_name'] = $document->party?->name;
         $data['party_code'] = $document->party?->code;
         $data['items_count'] = $document->relationLoaded('items')
@@ -1125,6 +1130,27 @@ class DocumentController extends Controller
             : $document->items()->count();
 
         return $data;
+    }
+
+    /**
+     * channel_meta yalnızca teknik/opak alanları taşır; kişisel veri eklenmez.
+     * Eski kayıtlarda alan null/geçersiz olabilir — API her durumda dizi ya da
+     * null döndürür (frontend güvenle `?? {}` kullanabilir).
+     */
+    private function decodeChannelMeta(Document $document): ?array
+    {
+        $raw = $document->channel_meta;
+
+        if (is_array($raw)) {
+            return $raw;
+        }
+        if (! is_string($raw) || trim($raw) === '') {
+            return null;
+        }
+
+        $decoded = json_decode($raw, true);
+
+        return is_array($decoded) ? $decoded : null;
     }
 
     protected function presentItem($item): array

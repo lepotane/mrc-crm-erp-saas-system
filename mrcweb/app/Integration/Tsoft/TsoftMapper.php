@@ -113,6 +113,131 @@ final class TsoftMapper
         );
     }
 
+    /**
+     * Panel/admin API v3 sipariş gövdesi (products/customer/address gömülü).
+     *
+     * KVKK: müşteri adı, e-posta, telefon ve adresler okunmaz; yalnızca opak
+     * customer.id / customer.wsCode ve fatura vergi numarası taşınır. `raw`
+     * alanı elle seçilmiş, iç içe dizi içermeyen güvenli anahtarlardan kurulur.
+     */
+    public static function adminOrder(array $raw): CanonicalOrder
+    {
+        $externalRef = (string) self::pick($raw, ['id'], '');
+        $orderNumber = self::pick($raw, ['orderNumber']);
+        $currency = strtoupper((string) self::pick($raw, ['orderCurrency'], 'EUR'));
+
+        $grandTotal = self::decimal(self::pick($raw, [
+            'summary.default.grandTotal',
+            'summary.customer.grandTotal',
+            'summary.default.total',
+        ]));
+
+        $statusId = (string) self::pick($raw, ['orderStatus.id'], '');
+        $paymentRef = self::pick($raw, ['payment.transactionId', 'orderNumber']);
+
+        $approved = ($raw['payment']['approved'] ?? null) === true;
+        $isPaid = $approved || in_array($statusId, ['7', '8', '13'], true);
+
+        $placedAt = null;
+        $createdAt = self::pick($raw, ['createdAt']);
+        if ($createdAt !== null && $createdAt !== '' && is_numeric($createdAt)) {
+            try {
+                $placedAt = Carbon::createFromTimestampUTC((int) $createdAt);
+            } catch (Throwable) {
+                $placedAt = null;
+            }
+        }
+
+        $taxNumber = self::pick($raw, ['address.billing.taxNumber']);
+        $buyerTaxId = self::nullableString($taxNumber);
+        if ($buyerTaxId !== null) {
+            $buyerTaxId = trim($buyerTaxId);
+            if ($buyerTaxId === '') {
+                $buyerTaxId = null;
+            }
+        }
+
+        $buyerRef = self::nullableString(self::pick($raw, ['customer.wsCode', 'customer.id']));
+
+        $lines = [];
+        $products = self::pick($raw, ['products'], []);
+        if (is_array($products)) {
+            foreach ($products as $product) {
+                if (! is_array($product)) {
+                    continue;
+                }
+
+                $sku = self::nullableString(self::pick($product, ['code', 'variantProductCode']));
+                $name = self::nullableString(self::pick($product, ['name']));
+                if (($name === null || $name === '') && ($sku === null || $sku === '')) {
+                    continue;
+                }
+
+                $variant = self::nullableString(self::pick($product, ['variantName']));
+                if ($name !== null && $variant !== null && $variant !== '') {
+                    $name = $name.' - '.$variant;
+                }
+
+                $externalLineRef = self::pick($product, ['id', 'productId']);
+
+                $lines[] = new CanonicalOrderLine(
+                    $sku,
+                    $name,
+                    self::decimal(self::pick($product, ['quantity'])),
+                    self::decimal(self::pick($product, [
+                        'priceSummary.default.unitSalePrice',
+                        'priceSummary.default.salePrice',
+                    ])),
+                    self::decimal(self::pick($product, ['tax'])),
+                    self::decimal(self::pick($product, ['discountPercent'])),
+                    $externalLineRef === null ? null : (string) $externalLineRef,
+                );
+            }
+        }
+
+        // Yalnızca güvenli alanlar: "name" içeren anahtarlar maskeleneceğinden
+        // bilinçli olarak kullanılmaz (PaymentBank, PaymentCardBrand vb. güvenli).
+        $safeRaw = [
+            'OrderStatusId' => $statusId,
+            'OrderTotalPrice' => $grandTotal,
+            'CustomerCode' => self::adminString(self::pick($raw, ['customer.wsCode'], '')),
+            'CustomerId' => self::adminString(self::pick($raw, ['customer.id'], '')),
+            'TsoftOrderNo' => self::adminString($orderNumber ?? ''),
+            'PaymentMethod' => self::adminString(self::pick($raw, ['payment.method'], '')),
+            'PaymentSubMethod' => self::adminString(self::pick($raw, ['payment.subMethod'], '')),
+            'PaymentBank' => self::adminString(self::pick($raw, ['payment.bankName'], '')),
+            'PaymentCardBrand' => self::adminString(self::pick($raw, ['payment.ccBrand'], '')),
+            'PaymentVendor' => self::adminString(self::pick($raw, ['payment.onlineTransactionVendor'], '')),
+            'PaymentTransactionId' => self::adminString(self::pick($raw, ['payment.transactionId'], '')),
+            'Installment' => self::adminString(self::pick($raw, ['payment.installment'], 0)),
+            'CargoCompany' => self::adminString(self::pick($raw, ['shipping.trackingCompany'], '')),
+            'TrackingNumber' => self::adminString(self::pick($raw, ['shipping.trackingNumber'], '')),
+            'InvoiceNo' => self::adminString(self::pick($raw, ['invoice.no'], '')),
+            'Platform' => self::adminString(self::pick($raw, ['platform'], '')),
+            'DiscountTotal' => self::decimal(self::pick($raw, ['summary.default.discountTotal'])),
+            'ShippingTotal' => self::decimal(self::pick($raw, ['summary.default.shipping'])),
+            'TaxTotal' => self::decimal(self::pick($raw, ['summary.default.tax'])),
+            'SubTotal' => self::decimal(self::pick($raw, ['summary.default.subTotal'])),
+            'ProductsCount' => self::adminString(self::pick($raw, ['productsCount'], 0)),
+            'PaymentApproved' => $approved ? '1' : '0',
+        ];
+
+        return new CanonicalOrder(
+            $externalRef,
+            $orderNumber === null ? null : (string) $orderNumber,
+            $currency,
+            $grandTotal,
+            $statusId,
+            self::nullableString($paymentRef),
+            $isPaid,
+            $placedAt,
+            $buyerTaxId,
+            $buyerRef,
+            $lines,
+            $safeRaw,
+        );
+    }
+
     public static function line(array $raw): CanonicalOrderLine
     {
         return new CanonicalOrderLine(
@@ -250,6 +375,12 @@ final class TsoftMapper
     private static function nullableString(mixed $value): ?string
     {
         return ($value === null || $value === '') ? null : (string) $value;
+    }
+
+    /** Güvenli `raw` alanları için skaler olmayan değerleri boş dizeye indirger. */
+    private static function adminString(mixed $value): string
+    {
+        return is_scalar($value) ? (string) $value : '';
     }
 
     private static function bool(mixed $value, bool $default = false): bool

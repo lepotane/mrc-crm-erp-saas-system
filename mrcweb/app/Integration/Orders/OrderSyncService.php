@@ -106,6 +106,13 @@ final class OrderSyncService
                 'notes' => 'Tsoft siparişi (kanonik içe aktarım); kişisel veri taşınmaz.',
             ]);
 
+            // Kanal metadata'sı: yalnızca beyaz listedeki opak teknik alanlar.
+            // notes alanı (KVKK notu) bilinçli olarak değiştirilmez.
+            $document->forceFill([
+                'external_no' => $this->externalNo($order),
+                'channel_meta' => $this->channelMeta($order),
+            ])->save();
+
             $lines = array_values($order->lines);
 
             // Tsoft rest1 order/get satır (ürün) dizisi döndürmez. Kalem gelmediği
@@ -482,6 +489,72 @@ final class OrderSyncService
     private function adapter(int $companyId): TsoftAdapter
     {
         return $this->adapter ?? new TsoftAdapter($companyId, app(CredentialVault::class));
+    }
+
+    /**
+     * Kanalın kendi sipariş numarası (ör. Tsoft `AK221114870`). Doküman serisi
+     * MRC'nin kendi numarasıdır; bu alan yalnızca dış sisteme geri bakış içindir.
+     */
+    private function externalNo(CanonicalOrder $order): ?string
+    {
+        $value = trim((string) ($order->orderNumber ?? ''));
+
+        if ($value === '' && is_array($order->raw ?? null)) {
+            $value = trim((string) ($order->raw['TsoftOrderNo'] ?? ''));
+        }
+
+        return $value !== '' ? mb_substr($value, 0, 120) : null;
+    }
+
+    /**
+     * `raw` içindeki GÜVENLİ alanlardan compact bir JSON üretir.
+     *
+     * Beyaz liste dışındaki hiçbir anahtar kopyalanmaz; boş değerler atlanır.
+     * Modelde `channel_meta` cast'i olmadığı için JSON burada kodlanır ve API
+     * katmanında (DocumentController) geri çözülür.
+     */
+    private function channelMeta(CanonicalOrder $order): ?string
+    {
+        if (! is_array($order->raw ?? null)) {
+            return null;
+        }
+
+        $map = [
+            'TsoftOrderNo' => 'tsoft_order_no',
+            'PaymentMethod' => 'payment_method',
+            'PaymentSubMethod' => 'payment_sub_method',
+            'PaymentBank' => 'payment_bank',
+            'PaymentCardBrand' => 'payment_card_brand',
+            'PaymentVendor' => 'payment_vendor',
+            'PaymentTransactionId' => 'payment_transaction_id',
+            'Installment' => 'installment',
+            'CargoCompany' => 'cargo_company',
+            'TrackingNumber' => 'tracking_number',
+            'InvoiceNo' => 'invoice_no',
+            'Platform' => 'platform',
+            'DiscountTotal' => 'discount_total',
+            'ShippingTotal' => 'shipping_total',
+            'TaxTotal' => 'tax_total',
+            'SubTotal' => 'subtotal',
+            'ProductsCount' => 'products_count',
+            'PaymentApproved' => 'payment_approved',
+        ];
+
+        $meta = [];
+        foreach ($map as $source => $target) {
+            $value = trim((string) ($order->raw[$source] ?? ''));
+            if ($value !== '') {
+                $meta[$target] = $value;
+            }
+        }
+
+        if ($meta === []) {
+            return null;
+        }
+
+        $json = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return $json === false ? null : $json;
     }
 
     private function elapsedMs(float $started): int

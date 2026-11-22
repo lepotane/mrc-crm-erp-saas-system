@@ -47,7 +47,7 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
 
     private bool $integrationLoaded = false;
 
-    private LegacyRest1Driver|Admin2026Driver|null $resolvedDriver = null;
+    private LegacyRest1Driver|Admin2026Driver|AdminApiDriver|null $resolvedDriver = null;
 
     public function __construct(
         Company|int $company,
@@ -69,7 +69,7 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
     /** @return array<int, CanonicalOrder> */
     public function fetchAllOrders(int $limit = 10000): array
     {
-        $driver = $this->driver();
+        $driver = $this->orderDriver();
 
         return method_exists($driver, 'fetchAllOrders')
             ? $driver->fetchAllOrders($limit)
@@ -79,12 +79,12 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
     /** @return array<int, CanonicalOrder> */
     public function fetchOrders(?CarbonInterface $since = null, int $limit = 100): array
     {
-        return $this->driver()->fetchOrders($since, $limit);
+        return $this->orderDriver()->fetchOrders($since, $limit);
     }
 
     public function fetchOrder(string $externalRef): ?CanonicalOrder
     {
-        return $this->driver()->fetchOrder($externalRef);
+        return $this->orderDriver()->fetchOrder($externalRef);
     }
 
     /**
@@ -219,9 +219,7 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
             (string) $this->attribute($integration, ['driver'], Driver::Rest1->value)
         )) ?? Driver::Rest1;
 
-        $domain = (string) ($this->attribute($integration, [
-            'domain', 'base_url', 'store_domain', 'host', 'url',
-        ]) ?? $this->vaultValue('domain') ?? '');
+        $domain = $this->domain();
 
         $this->resolvedDriver = match ($driver) {
             Driver::Admin2026 => new Admin2026Driver(
@@ -239,6 +237,43 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
         };
 
         return $this->resolvedDriver;
+    }
+
+    /**
+     * Yalnızca sipariş okuma için panel API v3 sürücüsü.
+     *
+     * Kalıcı yöntem: API anahtarı (clientId/clientSecret) ile token alınır.
+     * Panel oturum token'ı (panelToken) yalnızca 24 saatlik geçici geri dönüştür.
+     * Hiçbiri yoksa mevcut rest1/admin2026 davranışı bire bir korunur.
+     */
+    private function orderDriver(): LegacyRest1Driver|Admin2026Driver|AdminApiDriver
+    {
+        $clientId = $this->vaultValue('clientId') ?? '';
+        $clientSecret = $this->vaultValue('clientSecret') ?? '';
+        $panelToken = $this->vaultValue('panelToken');
+
+        $domain = $this->domain();
+        if ($domain === '') {
+            $domain = 'https://autokeystore.com';
+        }
+
+        if (trim($clientId) !== '' && trim($clientSecret) !== '') {
+            return new AdminApiDriver($this->companyId, $domain, $clientId, $clientSecret, $panelToken);
+        }
+
+        if ($panelToken !== null && trim($panelToken) !== '') {
+            return new AdminApiDriver($this->companyId, $domain, '', '', $panelToken);
+        }
+
+        return $this->driver();
+    }
+
+    /** driver() ile bire bir aynı alan çözümü. */
+    private function domain(): string
+    {
+        return (string) ($this->attribute($this->integration(), [
+            'domain', 'base_url', 'store_domain', 'host', 'url',
+        ]) ?? $this->vaultValue('domain') ?? '');
     }
 
     private function integration(): TenantIntegration
@@ -283,6 +318,7 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
             'password' => ['pass', 'api_password', 'rest_password'],
             'clientId' => ['client_id', 'clientid'],
             'clientSecret' => ['client_secret', 'clientsecret'],
+            'panelToken' => ['adminToken', 'apiToken', 'token'],
             'domain' => ['host', 'base_url', 'store_domain', 'url'],
         ];
 

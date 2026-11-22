@@ -1435,5 +1435,14 @@
   "Fiyat eşitlenemedi.": "Price could not be synced.",
   "Tümünü Uygula": "Apply to All",
   "Çıktı alırken fiyat sınıfını değiştirebilirsin.": "You can change the price class while taking the output.",
-  "Entegrasyon Merkezi": "Integration Center"
+  "Entegrasyon Merkezi": "Integration Center",
+  "Sipariş No": "Order No",
+  "Ödeme / Kargo": "Payment / Cargo",
+  "Kanal": "Channel",
+  "Ödeme yöntemi": "Payment method",
+  "Banka / Kart": "Bank / Card",
+  "İşlem No": "Transaction ID",
+  "Kargo firması": "Cargo company",
+  "Takip No": "Tracking No",
+  "Fatura No": "Invoice No"
 }
