@@ -26,6 +26,9 @@ use Illuminate\Http\Request;
  */
 class IntegrationWebhookController extends Controller
 {
+    /**
+     * Tsoft webhook alici
+     */
     public function handle(Request $request): JsonResponse
     {
         $rawBody = $request->getContent();

@@ -17,6 +17,8 @@ class IntegrationPriceController extends Controller
     use ResolvesTenant;
 
     /**
+     * Fiyatlari iki yonlu senkronize et
+     *
      * @response array{data: array{total:int,pushed:int,failed:int,skipped:int,details:array<int,array<string,mixed>>}}
      */
     public function sync(Request $request, PriceSyncService $service)

@@ -19,6 +19,9 @@ use Illuminate\Support\Facades\DB;
  */
 class AccountantController extends Controller
 {
+    /**
+     * Muhasebeci paneli verilerini listele
+     */
     public function index(Request $request): JsonResponse
     {
         $this->ensureAccountant($request);
@@ -55,7 +58,8 @@ class AccountantController extends Controller
         ]);
     }
 
-    /** Approve and hand selected vouchers to the configured Luca driver. */
+    /**
+     * Secili fisleri Lucaya aktar Approve and hand selected vouchers to the configured Luca driver. */
     public function approve(Request $request, ResmilesTirService $vouchers, CredentialVault $vault): JsonResponse
     {
         $this->ensureAccountant($request);

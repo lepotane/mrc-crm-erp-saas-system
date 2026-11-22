@@ -17,6 +17,9 @@ use InvalidArgumentException;
  */
 class AccountMappingController extends Controller
 {
+    /**
+     * Hesap plani ve eslemeleri listele
+     */
     public function index(Request $request): JsonResponse
     {
         $this->ensureAccountant($request);
@@ -36,7 +39,8 @@ class AccountMappingController extends Controller
         ]);
     }
 
-    /** Dosya yüklemesi veya ham içerik ile hesap planını içe aktarır. */
+    /**
+     * Luca hesap planini ice aktar Dosya yüklemesi veya ham içerik ile hesap planını içe aktarır. */
     public function import(Request $request): JsonResponse
     {
         $this->ensureAccountant($request);
@@ -71,7 +75,8 @@ class AccountMappingController extends Controller
         return response()->json($summary);
     }
 
-    /** Belge tipi + rol için hesap eşlemesi kaydeder. */
+    /**
+     * Hesap eslemesi kaydet Belge tipi + rol için hesap eşlemesi kaydeder. */
     public function store(Request $request): JsonResponse
     {
         $this->ensureAccountant($request);
@@ -99,7 +104,8 @@ class AccountMappingController extends Controller
         return response()->json($mapping, 201);
     }
 
-    /** Plan satırı adlarına göre (uygulanmayan) hesap kodu önerileri. */
+    /**
+     * Hesap kodu onerileri Plan satırı adlarına göre (uygulanmayan) hesap kodu önerileri. */
     public function suggest(Request $request): JsonResponse
     {
         $this->ensureAccountant($request);

@@ -25,6 +25,7 @@ final class IntegrationDiffController extends Controller
     public function __construct(private readonly SyncDiffService $diffs) {}
 
     /**
+     * Tsoft farklarini listele
      * Bekleyen (veya filtrelenmiş) farklar — {data,links,meta} sözleşmesi.
      *
      * @response array{
@@ -68,7 +69,8 @@ final class IntegrationDiffController extends Controller
         return response()->json($this->paginateJson($paginator));
     }
 
-    /** Fark sayımları (snapshot içermez). */
+    /**
+     * Fark ozetini getir Fark sayımları (snapshot içermez). */
     public function summary(Request $request)
     {
         $this->ensureAdmin($request);
@@ -76,7 +78,8 @@ final class IntegrationDiffController extends Controller
         return response()->json(['data' => $this->diffs->summary($this->tenantId($request))]);
     }
 
-    /** Tsoft'u okuyup farkları tespit eder (dry_run açıkken de okur). */
+    /**
+     * Tsoftu tarayip farklari tespit et Tsoft'u okuyup farkları tespit eder (dry_run açıkken de okur). */
     public function scan(Request $request)
     {
         $this->ensureAdmin($request);
@@ -86,7 +89,8 @@ final class IntegrationDiffController extends Controller
         ]);
     }
 
-    /** Seçili farkları MRC'ye aktarır; Tsoft'a yazmaz. */
+    /**
+     * Secili farklari MRCye aktar Seçili farkları MRC'ye aktarır; Tsoft'a yazmaz. */
     public function import(Request $request)
     {
         $this->ensureAdmin($request);
@@ -101,7 +105,8 @@ final class IntegrationDiffController extends Controller
         ]);
     }
 
-    /** Seçili farkları kullanıcı onayıyla yok sayar. */
+    /**
+     * Secili farklari yok say Seçili farkları kullanıcı onayıyla yok sayar. */
     public function ignore(Request $request)
     {
         $this->ensureAdmin($request);

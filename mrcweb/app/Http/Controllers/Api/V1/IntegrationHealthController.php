@@ -14,6 +14,8 @@ use Illuminate\Http\Request;
 class IntegrationHealthController extends Controller
 {
     /**
+     * Entegrasyon saglik ozeti
+     *
      * @response array{data: array<string, array<string,mixed>>}
      */
     public function index(Request $request)
