@@ -1,0 +1,24 @@
+{
+  "name": "MRC — Ön Muhasebe ve İş Yönetimi",
+  "short_name": "MRC",
+  "description": "MRC CRM · ERP · SaaS — Ön muhasebe, stok, satış ve raporlar.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#191E2C",
+  "theme_color": "#191E2C",
+  "lang": "tr",
+  "dir": "ltr",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Satış & Siparişler", "short_name": "Satış", "url": "/satislar", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Stok", "short_name": "Stok", "url": "/stok", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

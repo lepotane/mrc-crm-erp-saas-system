@@ -6,6 +6,18 @@
     <meta name="status-bar-style" content="#191E2C">
     <title>MRC — Ön Muhasebe ve İş Yönetimi</title>
     <meta name="description" content="MRC: Ön muhasebe, stok, satış, borç-alacak ve raporlar tek platformda.">
+
+    {{-- PWA: mobil ana ekrana "uygulama olarak" kurulum --}}
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/png" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+    <meta name="theme-color" content="#191E2C">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="MRC">
+    <meta name="application-name" content="MRC">
+
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="min-h-screen">

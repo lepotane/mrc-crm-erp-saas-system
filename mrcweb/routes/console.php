@@ -58,4 +58,6 @@ Schedule::command('integration:reconcile-orders')->dailyAt('03:15')->withoutOver
 Schedule::command('integration:accountant-reconcile')->weeklyOn(1, '04:00')->withoutOverlapping()->onOneServer();
 Schedule::command('integration:tsoft-writeback')->everyTenMinutes()->withoutOverlapping()->onOneServer();
 // Günlük artımlı ürün adı çevirisi (yeni ürünler için); toplu çalıştırma elle yapılır.
-Schedule::command('integration:translate-product-names --limit=100')->dailyAt('05:00')->withoutOverlapping()->onOneServer();
+// Ceviri: her 30 dk'da bir dener; kota doluysa komut 90 dk bekleyip cikar.
+// Boylece kota geri geldiginde kalan urunler otomatik tamamlanir.
+Schedule::command('integration:translate-product-names --limit=150')->everyThirtyMinutes()->withoutOverlapping()->onOneServer();

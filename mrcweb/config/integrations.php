@@ -61,5 +61,7 @@ return [
         'provider' => env('MRC_TRANSLATION_PROVIDER', 'mymemory'),
         'email' => env('MRC_TRANSLATION_EMAIL', 'info@mrc.local'),
         'delay_ms' => (int) env('MRC_TRANSLATION_DELAY_MS', 120),
+        // API kotasi/rate-limit doldugunda kac dk bekleyip yeniden denenecek.
+        'retry_minutes' => (int) env('MRC_TRANSLATION_RETRY_MINUTES', 90),
     ],
 ];

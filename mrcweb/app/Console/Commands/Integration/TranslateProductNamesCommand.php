@@ -8,6 +8,7 @@ use App\Integration\Translate\MyMemoryTranslator;
 use App\Integration\Translate\ProductNameTranslator;
 use App\Models\Product;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -31,6 +32,17 @@ class TranslateProductNamesCommand extends Command
 
     public function handle(GoogleTranslator $google, MyMemoryTranslator $translator): int
     {
+        // Kota/rate-limit koruması: onceki turda API'ye erisilemediyse 90 dk
+        // beklenir; cron her 30 dk'da bir gelir ama bu surecte is yapmaz.
+        $lockKey = 'integration.translation.quota_wait';
+        $waitUntil = (int) Cache::get($lockKey, 0);
+        if ($waitUntil > time()) {
+            $this->warn('Ceviri API kotasi dolu; '.round(($waitUntil - time()) / 60).' dk sonra tekrar denenecek.');
+
+            return self::SUCCESS;
+        }
+        Cache::forget($lockKey);
+
         $companyOption = $this->option('company');
         $force = (bool) $this->option('force');
         $dryRun = (bool) $this->option('dry-run');
@@ -107,7 +119,11 @@ class TranslateProductNamesCommand extends Command
                         ->where('source_hash', $hash)
                         ->first();
 
-                    if ($cached !== null) {
+                    // Offline sözlükle çevrilmiş satırlar "kota geri geldiğinde"
+                    // yeniden denenmelidir; gerçek API çevirisi varsa güncellenir.
+                    $retryOffline = $cached !== null && ($cached->provider ?? '') === 'offline';
+
+                    if ($cached !== null && ! $retryOffline) {
                         $translated = (string) $cached->translated_text;
                         $stats['cached']++;
                     } else {
@@ -122,9 +138,20 @@ class TranslateProductNamesCommand extends Command
 
                         if ($translated !== null && trim($translated) !== '') {
                             $stats['api']++;
+                            if ($retryOffline && ! $dryRun) {
+                                DB::table('product_name_translations')
+                                    ->where('id', $cached->id)
+                                    ->update([
+                                        'translated_text' => $translated,
+                                        'provider' => $provider,
+                                        'updated_at' => now(),
+                                    ]);
+                            }
                         } else {
                             // API başarısız/kota bitti: deterministic çevrimdışı sözlük.
-                            $translated = (new ProductNameTranslator)->toTurkish($source);
+                            $translated = $retryOffline
+                                ? (string) $cached->translated_text
+                                : (new ProductNameTranslator)->toTurkish($source);
                             $provider = 'offline';
                             $stats['offline']++;
                         }
@@ -203,6 +230,13 @@ class TranslateProductNamesCommand extends Command
             $totals['offline'],
             $totals['failed'],
         ));
+
+        // API kotasi/rate-limit dolduysa bir sonraki denemeyi 90 dk ertele.
+        // Cron her 30 dk'da bir gelse de bu sure boyunca komut hızlıca cikar.
+        if (! $dryRun && $totals['offline'] > 0) {
+            $retryMinutes = max(30, (int) config('integrations.translation.retry_minutes', 90));
+            Cache::put($lockKey, time() + ($retryMinutes * 60), now()->addMinutes($retryMinutes));
+        }
 
         return self::SUCCESS;
     }

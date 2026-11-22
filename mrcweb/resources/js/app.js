@@ -20,3 +20,13 @@ app.config.globalProperties.$locale = locale;
 app.config.globalProperties.$localeTag = computed(() => localeTag());
 
 app.mount('#app');
+
+// PWA: service worker yalnızca HTTPS/Localhost'ta kaydedilir.
+// API verileri önbelleğe alınmaz (bkz. public/sw.js).
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {
+            // PWA olmadan da uygulama normal çalışır.
+        });
+    });
+}
