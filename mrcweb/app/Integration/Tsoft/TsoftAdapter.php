@@ -88,92 +88,34 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
     }
 
     /**
-     * Alıcı satırlarını birleştirir: kalıcı rest1 okuması önce alınır, panel
-     * token'ı varsa panel satırları gerçek adlarıyla aynı code|id anahtarının
-     * üzerine yazılır. Kişisel veri günlüğe/hata mesajına asla kopyalanmaz.
+     * Alıcı satırları yalnızca kalıcı rest1 okumasından gelir: sipariş okuması
+     * sırasında sürücüde toplanan satırlar döndürülür. Panel oturumu/token'ına
+     * veya AdminApiDriver'a hiçbir bağımlılık yoktur. Kişisel veri günlüğe veya
+     * hata mesajına asla kopyalanmaz.
      *
      * @return array<int,array<string,mixed>>
      */
     public function fetchAllOrderBuyers(int $limit = 10000): array
     {
-        /** @var array<string,array<string,mixed>> $merged */
-        $merged = [];
-
-        // 1) Kalıcı sürücü: sipariş okuması sırasında toplanan rest1 satırları.
         try {
             $driver = $this->driver();
-            if (is_object($driver) && method_exists($driver, 'orderBuyers')) {
-                foreach ((array) $driver->orderBuyers() as $row) {
-                    if (! is_array($row)) {
-                        continue;
-                    }
-                    $key = $this->buyerKey($row);
-                    if ($key !== '') {
-                        $merged[$key] = $row;
-                    }
-                }
+            if (! is_object($driver) || ! method_exists($driver, 'orderBuyers')) {
+                return [];
             }
+            $rows = $driver->orderBuyers();
         } catch (Throwable) {
             // Genel hata; satır içeriği loglanmaz.
+            return [];
         }
 
-        $panelToken = $this->vaultValue('panelToken');
-        if ($panelToken === null || trim($panelToken) === '') {
-            return array_values($merged);
-        }
-
-        // 2) Panel: yalnızca panel oturum token'ı varsa, gerçek adlar için.
-        try {
-            $domain = $this->domain();
-            $panel = new AdminApiDriver(
-                $this->companyId,
-                $domain !== '' ? $domain : 'https://autokeystore.com',
-                '',
-                '',
-                $panelToken,
-            );
-
-            if (method_exists($panel, 'fetchAllOrders')) {
-                // Alıcılar aynı örnekte toplanır; ek okuma yöntemi yoktur.
-                $panel->fetchAllOrders($limit);
+        $buyers = [];
+        foreach ((array) $rows as $row) {
+            if (is_array($row)) {
+                $buyers[] = $row;
             }
-            if (method_exists($panel, 'orderBuyers')) {
-                foreach ((array) $panel->orderBuyers() as $row) {
-                    if (! is_array($row)) {
-                        continue;
-                    }
-                    $name = trim((string) ($row['name'] ?? ''));
-                    if ($name === '' || $this->placeholderBuyerName($name)) {
-                        continue;
-                    }
-                    $key = $this->buyerKey($row);
-                    if ($key !== '') {
-                        $merged[$key] = $row;
-                    }
-                }
-            }
-        } catch (Throwable) {
-            // Genel hata; satır içeriği loglanmaz.
         }
 
-        return array_values($merged);
-    }
-
-    /** @param array<string,mixed> $row */
-    private function buyerKey(array $row): string
-    {
-        return trim((string) ($row['code'] ?? '')).'|'.trim((string) ($row['id'] ?? ''));
-    }
-
-    /** Paneldeki placeholder adları rest1 kaydının üzerine yazılmaz. */
-    private function placeholderBuyerName(string $name): bool
-    {
-        $value = mb_strtolower(trim($name));
-
-        return in_array($value, [
-            'john doe', 'tsoft müşteri', 'tsoft musteri', 'tsoft-anon',
-            'guest', 'misafir', 'unknown', 'n/a', '-',
-        ], true) || str_contains($value, '@');
+        return $buyers;
     }
 
     /**

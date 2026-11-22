@@ -68,8 +68,11 @@ final class LegacyRest1Driver
                 'UpdateDateTimeStart' => $since?->format('Y-m-d H:i:s'),
                 'IsTransferred' => 0,
                 'Archive' => 0,
-                // Ürün kalemleri yalnızca bu anahtarla döner (canlı doğrulandı).
+                // Ürün/alıcı verileri yalnızca bu anahtarlarla döner (canlı doğrulandı).
                 'FetchProductData' => 1,
+                'FetchCustomerData' => 1,
+                'FetchInvoiceAddress' => 1,
+                'FetchDeliveryAddress' => 1,
                 'limit' => min($pageSize, $limit - $start),
                 'start' => $start,
             ]);
@@ -129,8 +132,11 @@ final class LegacyRest1Driver
             for ($start = 0; $start < $limit; $start += $pageSize) {
                 $response = $this->post('/order/get', [
                     'OrderStatusId' => $statusId,
-                    // Sipariş kalemleri yalnızca bu anahtarla döner (canlı doğrulandı).
+                    // Ürün/alıcı verileri yalnızca bu anahtarlarla döner (canlı doğrulandı).
                     'FetchProductData' => 1,
+                    'FetchCustomerData' => 1,
+                    'FetchInvoiceAddress' => 1,
+                    'FetchDeliveryAddress' => 1,
                     'limit' => min($pageSize, $limit - $start),
                     'start' => $start,
                 ]);
@@ -190,24 +196,29 @@ final class LegacyRest1Driver
     }
 
     /**
-     * Misafir siparişlerde CustomerName boş/boşluk olabilir; o zaman e-posta
-     * (CustomerUsername) yedek addır. Panel API'den gelen gerçek ad varsa
-     * adapter tarafında bu satırın üzerine yazılır.
+     * Misafir siparişlerde CustomerName boştur; gerçek ad yalnızca rest1'in
+     * iç içe adres nesnelerinde (InvoiceAddress / DeliveryAddress) bulunur.
+     * Bu veri kalıcıdır ve ek HTTP çağrısı veya panel oturumu gerektirmez.
+     * Kişisel veri yalnızca MRC tarafında cari oluşturma için kullanılır;
+     * asla günlüğe veya hata mesajına yazılmaz.
      */
     private function collectBuyer(array $row): void
     {
         $code = trim((string) ($row['CustomerCode'] ?? ''));
         $id = (string) ($row['CustomerId'] ?? '');
 
-        $name = '';
-        foreach ([$row['CustomerName'] ?? null, $row['CustomerUsername'] ?? null] as $candidate) {
-            $value = is_scalar($candidate) ? trim((string) $candidate) : '';
-            if ($value !== '') {
-                $name = $value;
+        // Fatura adresi önceliklidir; yoksa teslimat adresine düşülür.
+        $addr = is_array($row['InvoiceAddress'] ?? null)
+            ? $row['InvoiceAddress']
+            : (is_array($row['DeliveryAddress'] ?? null) ? $row['DeliveryAddress'] : null);
 
-                break;
-            }
-        }
+        $username = trim((string) ($row['CustomerUsername'] ?? ''));
+        $name = $this->firstNonEmpty([
+            $addr['Name'] ?? null,
+            $addr['Company'] ?? null,
+            $row['CustomerName'] ?? null,
+            $username,
+        ]);
         if ($name === '') {
             return;
         }
@@ -217,20 +228,51 @@ final class LegacyRest1Driver
             return;
         }
 
-        $username = trim((string) ($row['CustomerUsername'] ?? ''));
-        $delivery = $row['DeliveryAddress'] ?? null;
+        $phone = $this->firstNonEmpty([
+            $addr['Mobile'] ?? null,
+            $addr['OtherPhone'] ?? null,
+            $addr['Phone'] ?? null,
+            $row['CustomerPhone'] ?? null,
+        ]);
+        $tax = $this->firstNonEmpty([
+            $addr['Taxno'] ?? null,
+            $row['TaxNumber'] ?? null,
+            $row['TaxNo'] ?? null,
+        ]);
+
+        $addressParts = [];
+        foreach (['Address', 'Town', 'City', 'Country', 'Zipcode'] as $field) {
+            $value = is_array($addr) ? trim((string) ($addr[$field] ?? '')) : '';
+            if ($value !== '') {
+                $addressParts[] = $value;
+            }
+        }
 
         $this->buyers[$key] = [
             'code' => $code,
             'id' => $id,
             'name' => mb_substr($name, 0, 190),
             'email' => str_contains($username, '@') ? mb_substr($username, 0, 255) : '',
-            'phone' => mb_substr(trim((string) ($row['CustomerPhone'] ?? '')), 0, 30),
-            'tax' => mb_substr(trim((string) ($row['TaxNumber'] ?? $row['TaxNo'] ?? '')), 0, 20),
-            'city' => is_array($delivery)
-                ? mb_substr(trim((string) ($delivery['City'] ?? '')), 0, 60)
-                : '',
+            'phone' => mb_substr($phone, 0, 30),
+            'tax' => mb_substr($tax, 0, 20),
+            'city' => mb_substr(is_array($addr) ? trim((string) ($addr['City'] ?? '')) : '', 0, 60),
+            'address' => mb_substr(implode(', ', $addressParts), 0, 255),
         ];
+    }
+
+    /** İlk dolu skaler adayı döndürür (kişisel veri burada yazılmaz). */
+    private function firstNonEmpty(array $candidates): string
+    {
+        foreach ($candidates as $candidate) {
+            if (is_scalar($candidate)) {
+                $value = trim((string) $candidate);
+                if ($value !== '') {
+                    return $value;
+                }
+            }
+        }
+
+        return '';
     }
 
     public function fetchOrder(string $externalRef): ?CanonicalOrder
@@ -239,8 +281,11 @@ final class LegacyRest1Driver
             'OrderCode' => $externalRef,
             'IsTransferred' => 0,
             'Archive' => 0,
-            // Ürün kalemleri yalnızca bu anahtarla döner (canlı doğrulandı).
+            // Ürün/alıcı verileri yalnızca bu anahtarlarla döner (canlı doğrulandı).
             'FetchProductData' => 1,
+            'FetchCustomerData' => 1,
+            'FetchInvoiceAddress' => 1,
+            'FetchDeliveryAddress' => 1,
         ]);
 
         $this->assertSuccessful($response, 'Sipariş alınamadı');

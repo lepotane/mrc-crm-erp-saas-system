@@ -4,13 +4,14 @@ namespace App\Console\Commands\Integration;
 
 use App\Integration\Enums\Channel;
 use App\Integration\Sync\InteractsWithActiveTsoftTenants;
+use App\Integration\Sync\OrderBuyerSync;
 use App\Integration\Tsoft\TsoftAdapter;
 use App\Jobs\Integration\ProcessTsoftOrder;
 use App\Models\TenantIntegration;
 use Illuminate\Console\Command;
 use Throwable;
 
-/** Tsoft siparişlerini çekip kuyruğa verir; rota kaydetmez. */
+/** Tsoft siparişlerini çeker ve senkron olarak işler; rota kaydetmez. */
 class TsoftPullOrdersCommand extends Command
 {
     use InteractsWithActiveTsoftTenants;
@@ -45,8 +46,24 @@ class TsoftPullOrdersCommand extends Command
                 /** @var TsoftAdapter $adapter */
                 $adapter = app(TsoftAdapter::class, ['company' => $companyId]);
 
+                // Aynı sürücü örneğinde siparişler okunurken alıcılar da toplanır.
+                $orders = [];
                 foreach ($adapter->fetchOrders($since) as $order) {
-                    ProcessTsoftOrder::dispatch($companyId, $order->externalRef, $order->toArray());
+                    $orders[] = $order;
+                }
+
+                // Misafir cariler ingest'ten ÖNCE kurulur ki sipariş onları bulsun.
+                $buyers = $adapter->fetchAllOrderBuyers();
+                app(OrderBuyerSync::class)->sync($companyId, $buyers);
+
+                // Paylaşımlı hosting'de queue worker gerekmez; iş satır içinde runs.
+                foreach ($orders as $order) {
+                    ProcessTsoftOrder::dispatchSync(
+                        $companyId,
+                        $order->externalRef,
+                        $order->toArray(),
+                        $order->raw,
+                    );
                     $dispatched++;
                 }
 
@@ -57,7 +74,7 @@ class TsoftPullOrdersCommand extends Command
             }
         }
 
-        $this->info("Tsoft siparisleri: {$dispatched} job kuyruga verildi.");
+        $this->info("Tsoft siparisleri: {$dispatched} siparis islendi (senkron).");
 
         return self::SUCCESS;
     }

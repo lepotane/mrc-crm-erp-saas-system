@@ -919,6 +919,7 @@ final class MrcResyncService
                 $email = mb_substr(trim((string) ($raw['email'] ?? '')), 0, 255);
                 $phone = mb_substr(trim((string) ($raw['phone'] ?? '')), 0, 30);
                 $city = mb_substr(trim((string) ($raw['city'] ?? '')), 0, 60);
+                $address = mb_substr(trim((string) ($raw['address'] ?? '')), 0, 255);
 
                 $contactAttributes = [
                     'name' => $name,
@@ -926,6 +927,7 @@ final class MrcResyncService
                     'email' => $email !== '' ? $email : null,
                     'phone' => $phone !== '' ? $phone : null,
                     'city' => $city !== '' ? $city : null,
+                    'address' => $address !== '' ? $address : null,
                 ];
 
                 $party = Party::query()
@@ -938,6 +940,18 @@ final class MrcResyncService
                     $currentName = trim((string) $party->name);
                     if ($currentName === '' || in_array($currentName, ['Tsoft Müşteri', 'TSOFT-ANON'], true)) {
                         $party->fill($contactAttributes)->save();
+                    } else {
+                        // Üye cari listesinde adres/telefon boş olabilir; sipariş
+                        // adresinden yalnızca eksik alanları tamamla, mevcut veriyi ezme.
+                        $eksik = [];
+                        foreach (['tax_number', 'email', 'phone', 'city', 'address'] as $field) {
+                            if (trim((string) ($party->{$field} ?? '')) === '' && ($contactAttributes[$field] ?? null) !== null) {
+                                $eksik[$field] = $contactAttributes[$field];
+                            }
+                        }
+                        if ($eksik !== []) {
+                            $party->fill($eksik)->save();
+                        }
                     }
                 } else {
                     $attributes = $contactAttributes + [
