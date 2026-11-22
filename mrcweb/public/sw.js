@@ -1,6 +1,6 @@
 /* MRC PWA service worker — yalnızca uygulama kabuğunu ve statik varlıkları önbelleğe alır.
  * API yanıtları, oturum/veri bayatlamasın diye ASLA önbelleğe alınmaz. */
-const CACHE = 'mrc-shell-v4';
+const CACHE = 'mrc-shell-v5';
 const SHELL = ['/', '/manifest.webmanifest?v=2', '/icons/icon-192.png?v=2', '/icons/icon-512.png?v=2'];
 
 self.addEventListener('install', (event) => {
@@ -31,7 +31,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Statik varlıklar (build/, ikonlar, manifest): önce önbellek.
+  // Uygulama JS/CSS'i: ÖNCE AĞ. böylece yeni sürüm cihaza hemen gelir;
+  // ağ yoksa önbelleğe düşer (offline çalışmaya devam eder).
+  if (url.pathname.startsWith('/build/')) {
+    event.respondWith(
+      fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+        }
+        return res;
+      }).catch(() => caches.match(req)),
+    );
+    return;
+  }
+
+  // İkon/manifest: önce önbellek (sürümlü URL'ler zaten cache-bust yapıyor).
   event.respondWith(
     caches.match(req).then((cached) => cached || fetch(req).then((res) => {
       if (res.ok) {

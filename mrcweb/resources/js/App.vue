@@ -336,8 +336,12 @@ watch(isOnline, (online) => {
 
 onMounted(() => {
     syncScope();
-    if (authStore.token && !hasSeenNotifyPrompt() && getNotifyPermission() === 'default') {
+    const notifyPermission = getNotifyPermission();
+    if (authStore.token && !hasSeenNotifyPrompt() && notifyPermission === 'default') {
         showNotifyPrompt.value = true;
+    } else if (notifyPermission === 'granted' || notifyPermission === 'denied') {
+        // Kullanıcı tarayıcıdan izin vermiş/reddetmişse bir daha sorma.
+        markNotifyPromptSeen();
     }
     healthTimer = window.setInterval(pollIntegrationHealth, HEALTH_POLL_MS);
 });
