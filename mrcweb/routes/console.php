@@ -46,9 +46,11 @@ Schedule::command('bridge:prune')->dailyAt('04:30')->withoutOverlapping(); // V2
 Schedule::command('integration:outbox-relay')->everyMinute()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:gib-fetch-inbound')->hourly()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:tsoft-pull-orders')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
-Schedule::command('integration:tsoft-push-stock')->everyFifteenMinutes()->withoutOverlapping()->onOneServer();
-Schedule::command('integration:tsoft-push-price')->hourly()->withoutOverlapping()->onOneServer();
-Schedule::command('integration:tsoft-push-payment')->everyFifteenMinutes()->withoutOverlapping()->onOneServer();
+// ESKI MRC->Tsoft push komutlari KAPALI: Tsoft envanter/fiyat kaynak, yazma
+// yalnizca opt-in TsoftWritebackService uzerinden yapilir (Ana Depo + origin=mrc).
+// Schedule::command('integration:tsoft-push-stock')->everyFifteenMinutes()->withoutOverlapping()->onOneServer();
+// Schedule::command('integration:tsoft-push-price')->hourly()->withoutOverlapping()->onOneServer();
+// Schedule::command('integration:tsoft-push-payment')->everyFifteenMinutes()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:reconcile-stock')->hourly()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:tsoft-scan-diffs')->hourly()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:tsoft-pull-catalog')->hourly()->withoutOverlapping()->onOneServer();
