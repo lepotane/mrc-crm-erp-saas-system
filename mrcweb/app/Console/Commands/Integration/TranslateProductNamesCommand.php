@@ -22,6 +22,7 @@ class TranslateProductNamesCommand extends Command
     protected $signature = 'integration:translate-product-names
                             {--company= : Yalnızca bu firma}
                             {--limit=200 : En fazla ürün sayısı}
+                            {--offset=0 : Kaçıncı üründen başla (toplu partiler için)}
                             {--force : Elle değiştirilmiş Türkçe adları da güncelle}
                             {--dry-run : Hiçbir şey yazma (API çağrısı yapılır, sonuçlar gösterilir)}';
 
@@ -33,6 +34,7 @@ class TranslateProductNamesCommand extends Command
         $force = (bool) $this->option('force');
         $dryRun = (bool) $this->option('dry-run');
         $remaining = max(0, (int) $this->option('limit'));
+        $offset = max(0, (int) $this->option('offset'));
 
         $candidates = Product::query()
             ->whereNotNull('name_en')
@@ -74,6 +76,7 @@ class TranslateProductNamesCommand extends Command
             $products = (clone $candidates)
                 ->where('company_id', $companyId)
                 ->orderBy('id')
+                ->skip($offset)
                 ->limit($remaining)
                 ->get();
 
