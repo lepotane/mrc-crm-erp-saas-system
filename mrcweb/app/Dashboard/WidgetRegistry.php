@@ -319,7 +319,7 @@ class WidgetRegistry
             })
             ->with('party:id,name')
             ->orderByRaw('COALESCE(due_date, issue_date) ASC')
-            ->limit(200)
+            ->limit(1000)
             ->get(['id', 'serial', 'type', 'status', 'party_id', 'grand_total', 'issue_date', 'due_date', 'currency_code']);
 
         $paidMap = static::paidMap($company, $docs->pluck('id')->all());
