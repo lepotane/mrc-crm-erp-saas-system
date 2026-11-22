@@ -34,7 +34,7 @@ class PartiesTest extends TestCase
         $headers = $this->headersFrom($owner);
 
         $party = $this->apiPost('/api/v1/parties', [
-            'name' => 'Ortaklar Motors Ltd.',
+            'name' => 'Test Firma Ltd.',
             'type' => 'customer',
             'tax_number' => '1234567890',
             'phone' => '+90 222 000 0000',

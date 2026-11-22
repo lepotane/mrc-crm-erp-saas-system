@@ -637,7 +637,7 @@ function alanSimge(k) {
 function alanOrnek(k) {
     // Önizleme ürünü seçiliyse tuvalde GERÇEK adı göster (çıktı sürprizi olmasın).
     if (k === 'name' && onizlemeUrun.value?.name) return onizlemeUrun.value.name;
-    return { name: 'Volvo Smart 433MHz', barcode: '||||| || |||', qr: '[QR ▣]', code: '240000000001', price: '1.750,00' }[k] || k;
+    return { name: 'Ornek Urun 433MHz', barcode: '||||| || |||', qr: '[QR ▣]', code: '123456789012', price: '1.250,00' }[k] || k;
 }
 
 function bosTaslak(k, olcu = '38x25') {

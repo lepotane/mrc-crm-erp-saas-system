@@ -645,7 +645,7 @@
                                             @blur="focusedField = ''"
                                             class="w-full bg-transparent text-xs font-bold focus:outline-none mt-0.5"
                                             :class="isLight ? 'text-[#0F172A]' : 'text-white'"
-                                            :placeholder="L('Örn: Ortaklar Motors A.Ş.', 'e.g. Acme Corp.')"
+                                            :placeholder="L('Örn: Örnek A.Ş.', 'e.g. Acme Corp.')"
                                         />
                                     </div>
                                 </div>

@@ -29,25 +29,25 @@ class LabelRendererTest extends TestCase
     public function test_sigmayan_yazi_kucultulerek_sigdirilir(): void
     {
         // 92% 38mm etiket ≈ 419px kutu; uzun isim 9pt (38px) ile 2 satıra sığmaz.
-        $r = LabelRenderer::sigdir('VOLVO 4 BTN SMART 2016+ 8A 433 MHZ', $this->font, 38.0, 419.0, 2);
+        $r = LabelRenderer::sigdir('Ornek Urun Adi 433 MHz 2016 Plus 8A', $this->font, 38.0, 419.0, 2);
         $this->assertTrue($r['tam']);
         $this->assertLessThan(38.0, $r['px']);
         $this->assertLessThanOrEqual(2, count($r['lines']));
-        $this->assertSame('VOLVO 4 BTN SMART 2016+ 8A 433 MHZ',
+        $this->assertSame('Ornek Urun Adi 433 MHz 2016 Plus 8A',
             implode(' ', array_map(fn ($s) => trim($s), $r['lines'])));
     }
 
     public function test_kisa_metin_ayni_boyutta_kalir(): void
     {
-        $r = LabelRenderer::sigdir('Volvo Smart', $this->font, 38.0, 419.0, 2);
+        $r = LabelRenderer::sigdir('Ornek Urun', $this->font, 38.0, 419.0, 2);
         $this->assertTrue($r['tam']);
         $this->assertSame(38.0, $r['px']);
-        $this->assertSame(['Volvo Smart'], $r['lines']);
+        $this->assertSame(['Ornek Urun'], $r['lines']);
     }
 
     public function test_tek_satir_kod_kutuya_sigdirilir(): void
     {
-        $r = LabelRenderer::sigdir('2400000000013', $this->font, 22.0, 200.0, 1);
+        $r = LabelRenderer::sigdir('1234567890123', $this->font, 22.0, 200.0, 1);
         $this->assertTrue($r['tam']);
         $this->assertCount(1, $r['lines']);
     }

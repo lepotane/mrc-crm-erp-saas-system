@@ -29,7 +29,7 @@ class JoinRequestAndProfileTest extends TestCase
         $owner = User::factory()->create();
 
         Company::create([
-            'name' => 'Ortaklar Motors A.Ş.',
+            'name' => 'Test Firma A.Ş.',
             'slug' => 'ortaklar-motors',
             'tax_number' => '1111111111',
             'owner_id' => $owner->id,
@@ -57,28 +57,28 @@ class JoinRequestAndProfileTest extends TestCase
             ->assertJsonPath('status', 'suggestion')
             ->assertJsonPath('company.name', 'Abcd Yazılım Teknoloji Ltd. Şti.');
 
-        // 3. Fuzzy match "ortaklar motor" SHOULD suggest "Ortaklar Motors A.Ş."
+        // 3. Kısmi eşleşme "test firm" SHOULD suggest "Test Firma A.Ş."
         $resFuzzy = $this->postJson('/api/v1/public/company-lookup', [
-            'query' => 'ortaklar motor',
+            'query' => 'test firm',
         ]);
         $resFuzzy->assertOk()
             ->assertJsonPath('status', 'suggestion')
-            ->assertJsonPath('company.name', 'Ortaklar Motors A.Ş.');
+            ->assertJsonPath('company.name', 'Test Firma A.Ş.');
 
-        // 4. Exact normalized match "Ortaklar Motors A.Ş." SHOULD return exact
+        // 4. Exact normalized match "Test Firma A.Ş." SHOULD return exact
         $resExact = $this->postJson('/api/v1/public/company-lookup', [
-            'query' => 'Ortaklar Motors A.Ş.',
+            'query' => 'Test Firma A.Ş.',
         ]);
         $resExact->assertOk()
             ->assertJsonPath('status', 'exact')
-            ->assertJsonPath('company.name', 'Ortaklar Motors A.Ş.');
+            ->assertJsonPath('company.name', 'Test Firma A.Ş.');
     }
 
     public function test_join_request_submission_and_admin_approval_flow(): void
     {
         $admin = User::factory()->create();
         $company = Company::create([
-            'name' => 'Ortaklar Motors A.Ş.',
+            'name' => 'Test Firma A.Ş.',
             'slug' => 'ortaklar-motors-2',
             'tax_number' => '1234567890',
             'owner_id' => $admin->id,

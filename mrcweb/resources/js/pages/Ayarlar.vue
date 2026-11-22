@@ -83,7 +83,7 @@
                                 v-model="companyForm.name"
                                 type="text"
                                 required
-                                :placeholder="$t('Örn: Ortaklar Motors Ltd. Şti.')"
+                                :placeholder="$t('Örn: Örnek Şirket Ltd. Şti.')"
                                 class="w-full px-4 py-2.5 bg-[#131722] border border-white/10 rounded-xl text-white text-sm placeholder-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#B9FF66] transition-all"
                                 :class="{ 'border-[#C55050] focus:ring-[#C55050]': companyErrors.name }"
                             />
