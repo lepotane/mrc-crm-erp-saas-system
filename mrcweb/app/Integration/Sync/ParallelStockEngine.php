@@ -4,6 +4,7 @@ namespace App\Integration\Sync;
 
 use App\Integration\Canonical\CanonicalStock;
 use App\Integration\Canonical\SyncResult;
+use App\Integration\Support\TsoftWarehouse;
 use App\Integration\Tsoft\TsoftAdapter;
 use App\Models\Product;
 use App\Models\StockMovement;
@@ -26,6 +27,12 @@ final class ParallelStockEngine
 
     public function readMrc(int $companyId, string $sku, int $warehouseId): ?CanonicalStock
     {
+        // Yalnızca Tsoft hedef deposu outbound durumuna dahildir; diğer depolar
+        // (ör. "Mobil Araç Deposu") MRC içinde kalır, dışarıya aynalanmaz.
+        if (! TsoftWarehouse::isTsoftWarehouse($companyId, $warehouseId)) {
+            return null;
+        }
+
         $product = Product::query()
             ->where('company_id', $companyId)
             ->where('sku', $sku)
@@ -116,13 +123,18 @@ final class ParallelStockEngine
             $version = ((int) ($stateRow?->version ?? 0)) + 1;
             $owner = strtolower(trim($source));
 
+            // Hareket/sürüm/eşleme yazımları (inbound) aynı kalır; yalnızca
+            // Tsoft dışı deponun state satırı "dışarıya senkronize edildi"
+            // olarak işaretlenmez.
+            $isTsoftWarehouse = TsoftWarehouse::isTsoftWarehouse($companyId, $warehouseId);
+
             IntegrationStockState::updateOrCreate(
                 ['company_id' => $companyId, 'sku' => $sku, 'warehouse_id' => $warehouseId],
                 [
                     'quantity' => $quantityNow,
                     'version' => $version,
                     'source' => $owner,
-                    'synced_at' => now(),
+                    'synced_at' => $isTsoftWarehouse ? now() : null,
                 ],
             );
 
@@ -181,10 +193,23 @@ final class ParallelStockEngine
         }
 
         if ($result->ok && ! $result->skipped) {
-            DB::table('integration_stock_state')
-                ->where('company_id', $companyId)
-                ->where('sku', $stock->sku)
-                ->update(['synced_at' => now()]);
+            // Sadece Tsoft hedef deposunun satırı "senkronize edildi" olarak
+            // işaretlenir. Hedef yoksa hiçbir satır güncellenmez (fail-closed);
+            // aksi halde aynı SKU'nun diğer depoları da yanlışlıkla işaretlenir.
+            $targetWarehouseId = TsoftWarehouse::targetId($companyId);
+
+            if ($targetWarehouseId !== null) {
+                DB::table('integration_stock_state')
+                    ->where('company_id', $companyId)
+                    ->where('sku', $stock->sku)
+                    ->where('warehouse_id', $targetWarehouseId)
+                    ->update(['synced_at' => now()]);
+            } else {
+                Log::warning('integration.stock.push.no_tsoft_warehouse', [
+                    'company_id' => $companyId,
+                    'sku' => $stock->sku,
+                ]);
+            }
         }
 
         return $result;

@@ -71,6 +71,27 @@
                     <option value="">{{ $t('Tüm Kategoriler') }}</option>
                     <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
+                <div class="flex items-center gap-2">
+                    <PillButton
+                        variant="secondary"
+                        size="md"
+                        :disabled="selectedProductIds.length === 0"
+                        @click="openBulkTsoftPreview"
+                        :title="$t('Seçilen ürünleri Tsoft\'a gönder')"
+                    >
+                        <Upload class="w-4 h-4" />
+                        <span>{{ $t('Seçilenleri Tsoft\'a Gönder') }}</span>
+                        <span v-if="selectedProductIds.length" class="text-[10px] font-black"> ({{ selectedProductIds.length }})</span>
+                    </PillButton>
+                    <button
+                        v-if="selectedProductIds.length"
+                        type="button"
+                        @click="clearProductSelection"
+                        class="text-xs font-semibold text-[#94A3B8] hover:text-white cursor-pointer"
+                    >
+                        {{ $t('Seçimi Temizle') }}
+                    </button>
+                </div>
                 <div class="relative md:ml-auto md:w-72">
                     <Search class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#64748B]" />
                     <input
@@ -102,6 +123,15 @@
                 <table class="w-full text-sm min-w-[900px]">
                     <thead>
                         <tr class="text-left text-[11px] uppercase tracking-wider text-[#64748B] border-b border-white/[0.08]">
+                            <th class="py-3 pr-3 font-semibold w-10">
+                                <input
+                                    type="checkbox"
+                                    class="accent-[#B9FF66] w-4 h-4 cursor-pointer"
+                                    :checked="allPageSelected"
+                                    :title="$t('Tümünü seç')"
+                                    @change="toggleSelectAllProducts"
+                                />
+                            </th>
                             <th class="py-3 pr-3 font-semibold w-14">{{ $t('Görsel') }}</th>
                             <th class="py-3 pr-3 font-semibold">{{ $t('Ad') }}</th>
                             <th class="py-3 pr-3 font-semibold">{{ $t('Kategori') }}</th>
@@ -117,6 +147,15 @@
                     </thead>
                     <tbody class="divide-y divide-white/[0.06]">
                         <tr v-for="p in products" :key="p.id" class="hover:bg-white/[0.03] transition-colors">
+                            <td class="py-3 pr-3">
+                                <input
+                                    type="checkbox"
+                                    class="accent-[#B9FF66] w-4 h-4 cursor-pointer"
+                                    :checked="selectedProductIds.includes(p.id)"
+                                    :title="$t('Ürünü seç')"
+                                    @change="toggleProductSelection(p.id)"
+                                />
+                            </td>
                             <td class="py-3 pr-3">
                                 <button
                                     v-if="p.image_url && !failedImages[p.image_url]"
@@ -630,6 +669,72 @@
                 <div class="flex items-center justify-end gap-3 pt-2">
                     <PillButton type="button" variant="ghost" size="md" :disabled="tsoftSending" @click="closeTsoftPreview">{{ $t('Vazgeç') }}</PillButton>
                     <PillButton type="button" variant="primary" size="md" :loading="tsoftSending" @click="confirmTsoftPush">{{ $t('Tsoft\'a Gönder') }}</PillButton>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOPLU TSOFT GÖNDERİM ÖNİZLEME / ONAY MODALI -->
+        <div v-if="bulkTsoftPreview" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs" @click.self="closeBulkTsoftPreview">
+            <div class="bg-[#212738] border border-white/15 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-5 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center gap-3 text-[#8CD5F4]">
+                    <div class="w-10 h-10 rounded-2xl bg-[#8CD5F4]/15 border border-[#8CD5F4]/30 flex items-center justify-center shrink-0">
+                        <Upload class="w-5 h-5 text-[#8CD5F4]" />
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-white">{{ $t('Seçilenleri Tsoft\'a Gönder') }}</h3>
+                        <p class="text-xs text-[#94A3B8]">
+                            {{ $t(':count ürün için Tsoft gönderimi önizleniyor.', { count: bulkTsoftPreview.counts?.total ?? selectedProductIds.length }) }}
+                        </p>
+                    </div>
+                    <button type="button" @click="closeBulkTsoftPreview" class="ml-auto p-2 rounded-full text-[#94A3B8] hover:text-white hover:bg-white/10 transition-colors cursor-pointer">
+                        <X class="w-5 h-5" />
+                    </button>
+                </div>
+                <div
+                    v-if="bulkTsoftPreview.would_write === false"
+                    class="flex items-center gap-2 p-3 rounded-xl bg-[#E6A6F3]/10 border border-[#E6A6F3]/30 text-[#E6A6F3] text-xs font-semibold"
+                >
+                    <AlertTriangle class="w-4 h-4 shrink-0" />
+                    <span>{{ $t('Önizleme modu — canlı yazma kapalı') }}</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-4 p-3 rounded-xl bg-[#131722] border border-white/10">
+                    <label class="flex items-center gap-2 text-xs text-[#CBD5E1] cursor-pointer">
+                        <input v-model="bulkIncludePrice" type="checkbox" class="accent-[#B9FF66] w-4 h-4" />
+                        {{ $t('Fiyatı da gönder') }}
+                    </label>
+                    <label class="flex items-center gap-2 text-xs text-[#CBD5E1] cursor-pointer">
+                        <input v-model="bulkIncludeStock" type="checkbox" class="accent-[#B9FF66] w-4 h-4" />
+                        {{ $t('Stoğu da gönder') }}
+                    </label>
+                </div>
+                <div class="rounded-xl bg-[#131722] border border-white/10 divide-y divide-white/[0.06] max-h-72 overflow-y-auto">
+                    <div v-for="row in bulkTsoftPreview.rows || []" :key="row.id" class="flex items-start justify-between gap-3 px-4 py-2.5">
+                        <div class="min-w-0">
+                            <p class="text-xs font-bold text-white truncate">{{ row.name || (row.sku || `#${row.id}`) }}</p>
+                            <p class="text-[11px] font-mono text-[#94A3B8]">{{ row.sku || '-' }}</p>
+                            <p v-if="row.reasons?.length" class="text-[11px] text-[#FFA0A0] mt-0.5">{{ row.reasons.join(', ') }}</p>
+                        </div>
+                        <div class="text-right shrink-0">
+                            <span
+                                class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-black border"
+                                :class="row.kind === 'skip' || row.status === 'failed' || row.status === 'invalid'
+                                    ? 'bg-[#C55050]/15 text-[#FFA0A0] border-[#C55050]/40'
+                                    : (row.status === 'ok' || row.already_pushed
+                                        ? 'bg-[#B9FF66]/15 text-[#B9FF66] border-[#B9FF66]/40'
+                                        : 'bg-white/5 text-[#CBD5E1] border-white/15')"
+                            >
+                                {{ bulkTsoftStatusLabel(row) }}
+                            </span>
+                            <p v-if="row.already_pushed" class="text-[10px] text-[#94A3B8] mt-1">{{ $t('Zaten gönderildi') }}</p>
+                        </div>
+                    </div>
+                    <p v-if="!bulkTsoftPreview.rows?.length" class="px-4 py-6 text-center text-xs text-[#94A3B8]">
+                        {{ $t('Gönderilecek ürün bulunamadı.') }}
+                    </p>
+                </div>
+                <div class="flex items-center justify-end gap-3 pt-2">
+                    <PillButton type="button" variant="ghost" size="md" :disabled="bulkTsoftSending" @click="closeBulkTsoftPreview">{{ $t('Vazgeç') }}</PillButton>
+                    <PillButton type="button" variant="primary" size="md" :loading="bulkTsoftSending" @click="confirmBulkTsoftPush">{{ $t('Tsoft\'a Gönder') }}</PillButton>
                 </div>
             </div>
         </div>
@@ -1277,6 +1382,90 @@ async function confirmTsoftPush() {
         triggerError(err.response?.data?.message || t('Ürün Tsoft\'a gönderilemedi.'));
     } finally {
         tsoftSending.value = false;
+    }
+}
+
+// --- Toplu Tsoft gönderimi (seçim + önizleme + onay) ---
+const selectedProductIds = ref([]);
+const bulkIncludePrice = ref(true);
+const bulkIncludeStock = ref(true);
+const bulkTsoftPreview = ref(null);
+const bulkTsoftSending = ref(false);
+
+const allPageSelected = computed(() =>
+    products.value.length > 0 && products.value.every((p) => selectedProductIds.value.includes(p.id)),
+);
+
+function toggleSelectAllProducts() {
+    const pageIds = products.value.map((p) => p.id);
+    selectedProductIds.value = allPageSelected.value
+        ? selectedProductIds.value.filter((id) => !pageIds.includes(id))
+        : [...new Set([...selectedProductIds.value, ...pageIds])];
+}
+function toggleProductSelection(id) {
+    selectedProductIds.value = selectedProductIds.value.includes(id)
+        ? selectedProductIds.value.filter((selectedId) => selectedId !== id)
+        : [...selectedProductIds.value, id];
+}
+function clearProductSelection() {
+    selectedProductIds.value = [];
+}
+
+function bulkTsoftStatusLabel(row) {
+    const labels = {
+        create: t('Oluşturulacak'),
+        update: t('Güncellenecek'),
+        skip: t('Atlanacak'),
+        ok: t('Başarılı'),
+        failed: t('Başarısız'),
+        skipped: t('Atlandı'),
+        invalid: t('Atlanacak'),
+        already_pushed: t('Zaten gönderildi'),
+    };
+    return labels[row.status] || labels[row.kind] || row.kind || '-';
+}
+
+async function openBulkTsoftPreview() {
+    if (!selectedProductIds.value.length || bulkTsoftSending.value) return;
+    bulkTsoftPreview.value = null;
+    try {
+        const res = await client.post('/products/tsoft-bulk-push', {
+            product_ids: [...selectedProductIds.value],
+        });
+        bulkTsoftPreview.value = res.data || {};
+    } catch (err) {
+        triggerError(err.response?.data?.message || t('Toplu Tsoft önizlemesi yüklenemedi.'));
+    }
+}
+function closeBulkTsoftPreview() {
+    bulkTsoftPreview.value = null;
+}
+async function confirmBulkTsoftPush() {
+    if (bulkTsoftSending.value || !selectedProductIds.value.length) return;
+    bulkTsoftSending.value = true;
+    try {
+        const res = await client.post('/products/tsoft-bulk-push', {
+            product_ids: [...selectedProductIds.value],
+            confirm: true,
+            include_price: bulkIncludePrice.value,
+            include_stock: bulkIncludeStock.value,
+        });
+        const data = res.data || {};
+        const counts = data.counts || {};
+        triggerSuccess(
+            data.message
+            || t('Toplu Tsoft gönderimi tamamlandı: :ok başarılı, :failed başarısız.', {
+                ok: counts.ok ?? 0,
+                failed: counts.failed ?? 0,
+            }),
+        );
+        closeBulkTsoftPreview();
+        clearProductSelection();
+        fetchProducts();
+    } catch (err) {
+        triggerError(err.response?.data?.message || t('Toplu Tsoft gönderimi başarısız.'));
+    } finally {
+        bulkTsoftSending.value = false;
     }
 }
 

@@ -61,3 +61,8 @@ Schedule::command('integration:tsoft-writeback')->everyTenMinutes()->withoutOver
 // Ceviri: her 30 dk'da bir dener; kota doluysa komut 90 dk bekleyip cikar.
 // Boylece kota geri geldiginde kalan urunler otomatik tamamlanir.
 Schedule::command('integration:translate-product-names --limit=150')->everyThirtyMinutes()->withoutOverlapping()->onOneServer();
+
+// Yeni operasyon işleri
+Schedule::command('integration:catalog-quality --repair')->dailyAt('04:45')->withoutOverlapping()->onOneServer();
+Schedule::command('integration:tsoft-pull-payments')->everyTwoHours()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:luca-export')->dailyAt('05:30')->withoutOverlapping()->onOneServer();

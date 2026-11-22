@@ -5,11 +5,11 @@ namespace App\Integration\Sync;
 use App\Integration\Enums\SyncDirection;
 use App\Integration\Orders\IntegrationAudit;
 use App\Integration\Support\CredentialVault;
+use App\Integration\Support\TsoftWarehouse;
 use App\Integration\Tsoft\TsoftWriteDriver;
 use App\Models\Document;
 use App\Models\Product;
 use App\Models\StockMovement;
-use App\Models\Warehouse;
 use Throwable;
 
 /**
@@ -58,13 +58,19 @@ final class TsoftWritebackService
                 return $result;
             }
 
-            $warehouseId = $this->resolveWarehouseId($companyId);
-            if ($warehouseId === null || (int) $document->warehouse_id !== $warehouseId) {
-                // Gelecekteki varsayılan olmayan depolar hariç tutulur.
+            $documentWarehouseId = $document->warehouse_id === null
+                ? null
+                : (int) $document->warehouse_id;
+
+            // Tek paylaşılan çözümleyici: hedef yoksa (null) da false döner,
+            // yani belge atlanır. Diğer depolar Tsoft'dan izole edilir.
+            if (! TsoftWarehouse::isTsoftWarehouse($companyId, $documentWarehouseId)) {
                 $result['skipped']++;
 
                 return $result;
             }
+
+            $warehouseId = (int) $documentWarehouseId;
 
             // Sürücü kendi guard'ına sahiptir; fakat salt okuma bile HTTP
             // gerektirdiğinden kapalıyken hiç çağrı yapmamak için burada da
@@ -178,22 +184,6 @@ final class TsoftWritebackService
     {
         return config('integrations.dry_run') !== true
             && config('integrations.channels.tsoft.stock_write_enabled') === true;
-    }
-
-    private function resolveWarehouseId(int $companyId): ?int
-    {
-        $configured = config('integrations.channels.tsoft.warehouse_id');
-        if ($configured !== null && $configured !== '' && (int) $configured > 0) {
-            return (int) $configured;
-        }
-
-        $id = Warehouse::query()
-            ->where('company_id', $companyId)
-            ->orderByDesc('is_default')
-            ->orderBy('id')
-            ->value('id');
-
-        return $id === null ? null : (int) $id;
     }
 
     /**

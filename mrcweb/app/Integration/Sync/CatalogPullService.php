@@ -3,6 +3,7 @@
 namespace App\Integration\Sync;
 
 use App\Integration\Canonical\CanonicalProduct;
+use App\Integration\Quality\CatalogQualityService;
 use App\Integration\Translate\ProductNameTranslator;
 use App\Integration\Tsoft\TsoftAdapter;
 use App\Integration\Tsoft\TsoftMapper;
@@ -102,6 +103,16 @@ final class CatalogPullService
             } catch (Throwable) {
                 $summary['errors'][] = 'products['.$index.']: urun yazilamadi.';
             }
+        }
+
+        // 2b) Veri kalitesi onarimi (yalnizca MRC tarafi): kategorisiz urunler
+        // "Kategorisiz" altina alinir; Tsoft gorsel vermeyenlere yerel placeholder
+        // atanir. Gercek Tsoft gorselleri/elle girilmis degerler ezilmez, urun
+        // silinmez ve Tsoft'a hicbir yazma ucu cagrilmaz.
+        try {
+            app(CatalogQualityService::class)->repair($companyId);
+        } catch (Throwable) {
+            $summary['errors'][] = 'quality: onarim yapilamadi.';
         }
 
         // 3) Fiyatlar: ayni ham satirlar PriceSyncService::pull()'a verilir.

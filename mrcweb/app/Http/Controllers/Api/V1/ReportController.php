@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Concerns\PresentsPaginator;
 use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
+use App\Integration\Reports\ProductProfitService;
 use App\Models\Document;
 use App\Models\Party;
 use App\Services\PartyBalance;
@@ -29,11 +30,11 @@ use Illuminate\Validation\Rule;
  */
 class ReportController extends Controller
 {
-    use ResolvesTenant, PresentsPaginator;
+    use PresentsPaginator, ResolvesTenant;
 
     public const OPEN_STATUSES = ['issued', 'partially_paid', 'paid'];
 
-    public const CURRENCY_NOTE = "Tutarlar para birimi bazında ayrıdır; para birimi çevirimi sonraki bir sürümde eklenecektir.";
+    public const CURRENCY_NOTE = 'Tutarlar para birimi bazında ayrıdır; para birimi çevirimi sonraki bir sürümde eklenecektir.';
 
     protected function currencyNote(): string
     {
@@ -370,6 +371,7 @@ class ReportController extends Controller
             ],
         ]);
     }
+
     protected function monthName(string $key): string
     {
         try {
@@ -576,6 +578,7 @@ class ReportController extends Controller
         usort($rows, function ($a, $b) use ($sort) {
             $pa = $a['party'];
             $pb = $b['party'];
+
             return match ($sort) {
                 'balance_asc' => $a['balance'] <=> $b['balance']
                     ?: strcmp((string) $pa->name, (string) $pb->name),
@@ -1253,6 +1256,63 @@ class ReportController extends Controller
             'meta' => [
                 'days' => $days,
                 'stale_days' => $staleDays,
+                'currency_note' => $this->currencyNote(),
+            ],
+        ]);
+    }
+
+    /**
+     * Ürün bazında kârlılık raporu (SKU / ad / satılan miktar / ciro / maliyet / kâr / marj).
+     *
+     * Hesaplama ProductProfitService'te yapılır; servis 4 ondalıklı DECIMAL string
+     * döndürür, API katmanı mevcut raporlarla aynı biçimde float'a çevirir.
+     * Faturalanmış sales_order'lar çift sayılmaz; iadeler bu rapora dahil edilmez.
+     *
+     * @response array{
+     *     rows: array<int, array{product_id:int, sku:string, name:string, sold_qty:float, revenue:float, cogs:float, profit:float, margin:float|null}>,
+     *     totals: array{sold_qty:float, revenue:float, cogs:float, profit:float, margin:float|null},
+     *     meta: array{from:string, to:string, currency_note:string}
+     * }
+     */
+    public function productProfit(Request $request)
+    {
+        $companyId = $this->tenantId($request);
+        [$from, $to] = $this->dateRange($request);
+
+        $report = (new ProductProfitService)->profit($companyId, $from, $to);
+
+        $money = function (?string $value) {
+            return $value === null ? null : $this->r4($value);
+        };
+
+        $rows = [];
+        foreach ($report['rows'] as $row) {
+            $rows[] = [
+                'product_id' => (int) $row['product_id'],
+                'sku' => (string) $row['sku'],
+                'name' => (string) $row['name'],
+                'sold_qty' => $this->r4($row['sold_qty']),
+                'revenue' => $this->r4($row['revenue']),
+                'cogs' => $this->r4($row['cogs']),
+                'profit' => $this->r4($row['profit']),
+                'margin' => $money($row['margin']),
+            ];
+        }
+
+        $totals = [
+            'sold_qty' => $this->r4($report['totals']['sold_qty']),
+            'revenue' => $this->r4($report['totals']['revenue']),
+            'cogs' => $this->r4($report['totals']['cogs']),
+            'profit' => $this->r4($report['totals']['profit']),
+            'margin' => $money($report['totals']['margin']),
+        ];
+
+        return response()->json([
+            'rows' => $rows,
+            'totals' => $totals,
+            'meta' => [
+                'from' => $from,
+                'to' => $to,
                 'currency_note' => $this->currencyNote(),
             ],
         ]);

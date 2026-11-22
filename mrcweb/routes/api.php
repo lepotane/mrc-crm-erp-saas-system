@@ -169,6 +169,8 @@ Route::prefix('v1')->group(function () {
         // Faz 2 — Ürün kataloğu
         Route::get('products', [ProductController::class, 'index']);
         Route::post('products', [ProductController::class, 'store']);
+        // Toplu Tsoft gönderimi: {product} wildcard'ından önce tanımlanır
+        Route::post('products/tsoft-bulk-push', [ProductController::class, 'tsoftBulkPush']);
         Route::get('products/{product}', [ProductController::class, 'show']);
         Route::patch('products/{product}', [ProductController::class, 'update']);
         Route::delete('products/{product}', [ProductController::class, 'destroy']);
@@ -335,6 +337,7 @@ Route::prefix('v1')->group(function () {
 
         // V2-1 — Kâr raporu: ciro − COGS, iadeler netlenir.
         Route::get('reports/profit', [ReportController::class, 'profit'])->middleware('report.cache');
+        Route::get('reports/product-profit', [ReportController::class, 'productProfit'])->middleware('report.cache');
 
         // V2-3 — Depo pro raporları (tedarik önerisi, ABC, devir hızı).
         Route::get('reports/stock-replenishment', [ReportController::class, 'stockReplenishment'])->middleware('report.cache');

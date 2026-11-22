@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Integration\Enums\SyncDirection;
 use App\Integration\Orders\IntegrationAudit;
 use App\Integration\Sync\TsoftWritebackService;
+use App\Integration\Tsoft\TsoftBulkPushService;
 use App\Models\Currency;
 use App\Models\Product;
 use App\Models\StockMovement;
@@ -337,6 +338,92 @@ class ProductController extends Controller
             'status' => $status,
             'result' => $result,
             'message' => $messages[$status],
+        ]);
+    }
+
+    /**
+     * Seçili ürünleri Tsoft'a toplu gönderime hazırlar / gönderir (opt-in).
+     *
+     * Varsayılan çağrı YAZMAZ; her ürün için eksik alanları, işlem türünü
+     * (create/update/skip) ve gönderilecek payload'ı döner. `confirm=true` ile
+     * ürün + fiyat + stok yazımı yapılır; sürücülerin kendi guard'ları ve
+     * `bulk:<productId>:<kind>` idempotency anahtarları geçerlidir.
+     *
+     * @response array{preview: bool, would_write: bool, counts: array<string,int>, rows: array<int,array<string,mixed>>, message: string}
+     */
+    #[BodyParameter(
+        name: 'product_ids',
+        description: 'Gönderilecek ürün kimlikleri (en fazla 200)',
+        required: true,
+        type: 'array',
+    )]
+    #[BodyParameter(
+        name: 'confirm',
+        description: 'true ise yazma yapılır (varsayılan: yalnızca önizleme)',
+        type: 'bool',
+    )]
+    #[BodyParameter(name: 'include_price', description: 'Fiyat da gönderilsin (varsayılan: true)', type: 'bool')]
+    #[BodyParameter(name: 'include_stock', description: 'Stok da gönderilsin (varsayılan: true)', type: 'bool')]
+    public function tsoftBulkPush(Request $request)
+    {
+        $companyId = $this->tenantId($request);
+
+        $data = $request->validate([
+            'product_ids' => ['required', 'array', 'max:200'],
+            'product_ids.*' => ['integer'],
+            'confirm' => ['nullable', 'boolean'],
+            'include_price' => ['nullable', 'boolean'],
+            'include_stock' => ['nullable', 'boolean'],
+        ]);
+
+        $productIds = array_values(array_unique(array_map('intval', $data['product_ids'])));
+        $found = Product::query()
+            ->where('company_id', $companyId)
+            ->whereIn('id', $productIds)
+            ->count();
+
+        if ($found !== count($productIds)) {
+            return response()->json([
+                'message' => __('Seçilen ürünlerden bazıları bulunamadı.'),
+            ], 422);
+        }
+
+        /** @var TsoftBulkPushService $service */
+        $service = app(TsoftBulkPushService::class);
+        $wouldWrite = config('integrations.dry_run') !== true
+            && config('integrations.channels.tsoft.catalog_write_enabled') === true;
+
+        if (! $request->boolean('confirm')) {
+            $result = $service->preview($companyId, $productIds);
+
+            return response()->json([
+                'preview' => true,
+                'would_write' => $wouldWrite,
+                'counts' => $result['counts'],
+                'rows' => $result['rows'],
+                'message' => __(':count ürün Tsoft gönderimi için önizlendi.', [
+                    'count' => $result['counts']['total'],
+                ]),
+            ]);
+        }
+
+        $result = $service->push(
+            $companyId,
+            $productIds,
+            $request->boolean('include_price', true),
+            $request->boolean('include_stock', true),
+        );
+
+        return response()->json([
+            'preview' => false,
+            'would_write' => $wouldWrite,
+            'counts' => $result['counts'],
+            'rows' => $result['rows'],
+            'message' => __('Toplu Tsoft gönderimi tamamlandı: :ok başarılı, :failed başarısız, :skipped atlanan.', [
+                'ok' => $result['counts']['ok'],
+                'failed' => $result['counts']['failed'],
+                'skipped' => $result['counts']['skipped'] + $result['counts']['already_pushed'],
+            ]),
         ]);
     }
 

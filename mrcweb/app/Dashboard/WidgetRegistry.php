@@ -2,6 +2,7 @@
 
 namespace App\Dashboard;
 
+use App\Integration\Alerts\SyncAlertService;
 use App\Models\AuditEvent;
 use App\Models\Company;
 use App\Models\CompanyJoinRequest;
@@ -96,6 +97,15 @@ class WidgetRegistry
                 'roles' => ['Admin'],
                 'size' => 'half',
                 'data' => [static::class, 'recentActivity'],
+            ],
+            'sync_health' => [
+                'title_key' => 'Senkron Sağlığı',
+                'description_key' => 'Son işlem sonuçları',
+                'module' => 'pano',
+                'default_enabled' => true,
+                'roles' => ['Admin'],
+                'size' => 'half',
+                'data' => [static::class, 'syncHealth'],
             ],
             'debt_summary' => [
                 'title_key' => 'Borç/Alacak Özeti',
@@ -424,6 +434,12 @@ class WidgetRegistry
                 'created_at' => $e->created_at?->format('Y-m-d H:i'),
             ])->all(),
         ];
+    }
+
+    /** Entegrasyonların son işlem sonuçları (yalnız Admin). */
+    public static function syncHealth(Company $company): array
+    {
+        return app(SyncAlertService::class)->syncHealth((int) $company->id);
     }
 
     /** Açık alacak/borç toplamları (para birimi bazında). */

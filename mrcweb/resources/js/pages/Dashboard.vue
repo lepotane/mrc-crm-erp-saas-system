@@ -1534,6 +1534,93 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- ==================== BENTO: SENKRON SAĞLIĞI (SYNC HEALTH) ==================== -->
+                <div
+                    v-else-if="wId === 'sync_health' && isWidgetVisible('sync_health')"
+                    :class="[getColSpanClass('sync_health'), editing ? 'ring-2 ring-dashed ring-[#B9FF66]/70 relative' : 'card-3d-interactive']"
+                    :draggable="editing"
+                    @dragstart="onWidgetDragStart($event, 'sync_health')"
+                    @dragover.prevent="onWidgetDragOver($event, 'sync_health')"
+                    @drop="onWidgetDrop($event, 'sync_health')"
+                    class="bg-[#212738] rounded-[28px] p-5 sm:p-6 border border-white/[0.07] shadow-[0_14px_34px_-10px_rgba(0,0,0,0.5)] flex flex-col justify-between transition-all duration-300 min-h-[260px]"
+                >
+                    <WidgetEditBar
+                        v-if="editing"
+                        widget-id="sync_health"
+                        title-key="Sürükle: Senkron Sağlığı"
+                        :span="getWidgetSpan('sync_health')"
+                        @set-span="setWidgetSpan('sync_health', $event)"
+                        @toggle="toggleWidget('sync_health')"
+                    />
+
+                    <div class="flex items-center justify-between gap-2 mb-4">
+                        <div class="min-w-0">
+                            <h2 class="text-lg sm:text-xl font-extrabold text-white tracking-tight">
+                                {{ $t('Senkron Sağlığı') }}
+                            </h2>
+                            <p class="text-[11px] text-[#64748B] mt-0.5">{{ $t('Son işlem sonuçları') }}</p>
+                        </div>
+                        <span
+                            class="px-2.5 py-1 rounded-full text-[10px] font-black border shrink-0"
+                            :class="syncStatusTone(syncHealthOverall) === 'ok'
+                                ? 'bg-[#4E956A]/25 text-[#B9FF66] border-[#B9FF66]/30'
+                                : syncStatusTone(syncHealthOverall) === 'error'
+                                    ? 'bg-[#C55050]/20 text-[#FFA0A0] border-[#C55050]/40'
+                                    : 'bg-amber-500/15 text-amber-300 border-amber-500/40'"
+                        >
+                            {{ syncStatusLabel(syncHealthOverall) }}
+                        </span>
+                    </div>
+
+                    <div v-if="syncHealthItems.length" class="space-y-2">
+                        <div
+                            v-for="item in syncHealthItems"
+                            :key="item.entity"
+                            class="flex items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-[#191E2C]/70 border border-white/[0.05]"
+                        >
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-bold text-white truncate">{{ syncEntityLabel(item.entity) }}</span>
+                                    <span
+                                        class="px-1.5 py-0.5 rounded-full text-[10px] font-black border shrink-0"
+                                        :class="syncStatusTone(item.status) === 'ok'
+                                            ? 'bg-[#4E956A]/25 text-[#B9FF66] border-[#B9FF66]/30'
+                                            : syncStatusTone(item.status) === 'error'
+                                                ? 'bg-[#C55050]/20 text-[#FFA0A0] border-[#C55050]/40'
+                                                : 'bg-amber-500/15 text-amber-300 border-amber-500/40'"
+                                    >
+                                        {{ syncStatusLabel(item.status) }}
+                                    </span>
+                                </div>
+                                <p v-if="item.summary" class="text-[10px] text-[#64748B] truncate mt-0.5">{{ item.summary }}</p>
+                            </div>
+                            <div class="text-right shrink-0">
+                                <p class="text-[10px] font-semibold text-[#94A3B8]">{{ syncLastRun(item) }}</p>
+                                <p v-if="item.duration_ms !== null" class="text-[10px] text-[#64748B]">{{ item.duration_ms }} ms</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-else class="flex-1 flex flex-col items-center justify-center text-center py-6">
+                        <div class="w-10 h-10 rounded-2xl bg-[#B9FF66]/10 text-[#B9FF66] flex items-center justify-center mb-2">
+                            <RefreshCw class="w-5 h-5" />
+                        </div>
+                        <p class="text-xs font-bold text-white">{{ $t('Henüz senkronizasyon kaydı yok.') }}</p>
+                    </div>
+
+                    <div class="pt-2 mt-2 border-t border-white/[0.06] flex items-center justify-between text-[10px] text-[#64748B]">
+                        <span>{{ $t('Son çalışmalar entegrasyon günlüğünden okunur.') }}</span>
+                        <button
+                            type="button"
+                            @click="toggleWidget('sync_health')"
+                            class="w-6 h-6 rounded-full bg-white/5 hover:bg-[#C55050]/20 text-[#64748B] hover:text-[#FFA0A0] flex items-center justify-center cursor-pointer"
+                            :title="$t('Bu Kartı Gizle')"
+                        >
+                            <X class="w-3 h-3" />
+                        </button>
+                    </div>
+                </div>
             </template>
         </div>
     </div>
@@ -1605,6 +1692,7 @@ const DEFAULT_BENTO_ORDER = [
     'fx_rates',
     'low_stock',
     'recent_activity',
+    'sync_health',
     'plugins_hub',
 ];
 
@@ -1621,6 +1709,7 @@ const DEFAULT_SPANS = {
     fx_rates: 4,
     low_stock: 4,
     recent_activity: 4,
+    sync_health: 4,
     plugins_hub: 12,
 };
 
@@ -1760,6 +1849,7 @@ const widgetToggleDefs = [
     { id: 'hr_applications', title: 'İK & Katılım Başvuruları', subtitle: 'CV & başvuru formu özeti' },
     { id: 'low_stock', title: 'Kritik Stok Uyarıları', subtitle: 'Minimum stok altı ürünler' },
     { id: 'recent_activity', title: 'Son İşlemler', subtitle: 'Denetim izi ve son hareketler' },
+    { id: 'sync_health', title: 'Senkron Sağlığı', subtitle: 'Son işlem sonuçları' },
     { id: 'plugins_hub', title: 'Modüler Plugin Merkezi', subtitle: 'Tak-çıkar eklenti ve modül yönetimi' },
 ];
 
@@ -2123,6 +2213,44 @@ const lowStockList = computed(() => {
 // Son İşlemler & Denetim İzi
 const recentWidget = computed(() => widgets.value.find((w) => w.key === 'recent_activity'));
 const recentActivities = computed(() => recentWidget.value?.data?.items || []);
+
+// Senkron Sağlığı — son entegrasyon sonuçları (widget: sync_health).
+const syncHealthWidget = computed(() => widgets.value.find((w) => w.key === 'sync_health'));
+const syncHealthOverall = computed(() => syncHealthWidget.value?.data?.overall || 'ok');
+const syncHealthItems = computed(() => syncHealthWidget.value?.data?.items || []);
+
+const SYNC_ENTITY_LABELS = {
+    orders: 'Siparişler',
+    catalog: 'Katalog',
+    writeback: 'Geri Yazma',
+    translation: 'Çeviri',
+    resync: 'Yeniden Senkronizasyon',
+};
+
+function syncEntityLabel(entity) {
+    return t(SYNC_ENTITY_LABELS[entity] || entity);
+}
+
+function syncStatusTone(status) {
+    if (['success', 'ok', 'synced', 'done'].includes(status)) return 'ok';
+    if (['failed', 'error', 'exception', 'drift'].includes(status)) return 'error';
+    return 'warning';
+}
+
+function syncStatusLabel(status) {
+    const tone = syncStatusTone(status);
+    if (tone === 'ok') return t('Başarılı');
+    if (tone === 'error') return t('Başarısız');
+    return status === 'none' ? t('Beklemede') : t('Uyarı');
+}
+
+function syncLastRun(item) {
+    if (!item.created_at) return t('Hiç çalışmadı');
+    if (typeof item.age_minutes === 'number' && item.age_minutes < 60) {
+        return item.age_minutes + ' ' + t('dk önce');
+    }
+    return item.created_at;
+}
 
 // Alacak & Borç Yaşlandırma Sütunları — GERÇEK açık bakiye (widget: debt_aging).
 const debtAgingWidget = computed(() => widgets.value.find((w) => w.key === 'debt_aging'));

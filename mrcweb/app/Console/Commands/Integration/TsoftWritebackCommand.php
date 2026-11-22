@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Integration;
 
+use App\Integration\Alerts\SyncAlertService;
 use App\Integration\Enums\SyncDirection;
 use App\Integration\Orders\IntegrationAudit;
 use App\Integration\Sync\InteractsWithActiveTsoftTenants;
@@ -169,6 +170,20 @@ class TsoftWritebackCommand extends Command
         }
 
         $this->info("Tsoft writeback: {$processed} işlendi, {$skipped} atlandı, {$errors} hata.");
+
+        // Hata varsa kısa bildirim (servis config kapalıyken hiçbir şey göndermez).
+        if ($errors > 0) {
+            app(SyncAlertService::class)->notify(
+                'writeback:'.$companyId,
+                [
+                    'company' => $companyId,
+                    'processed' => $processed,
+                    'skipped' => $skipped,
+                    'errors' => $errors,
+                ],
+                'writeback: kayit yaziminda hata olustu.',
+            );
+        }
 
         try {
             IntegrationAudit::log(

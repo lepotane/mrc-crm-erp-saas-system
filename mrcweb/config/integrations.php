@@ -30,6 +30,9 @@ return [
             'catalog_write_enabled' => env('MRC_TSOFT_CATALOG_WRITE', false),
             'stock_write_enabled' => env('MRC_TSOFT_STOCK_WRITE', false),
             'order_write_enabled' => env('MRC_TSOFT_ORDER_WRITE', false),
+            // Yalnızca bu depo Tsoft ile senkronize olur. Diğer depolar (ör.
+            // "Mobil Araç Deposu") MRC içinde kalır; Tsoft'a ne okunur ne
+            // yazılır. Boş bırakılırsa firmanın varsayılan deposu kullanılır.
             'warehouse_id' => env('MRC_TSOFT_WAREHOUSE_ID', null),
         ],
         'gib' => [

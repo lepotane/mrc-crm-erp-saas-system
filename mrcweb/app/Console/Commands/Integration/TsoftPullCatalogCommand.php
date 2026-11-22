@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Integration;
 
+use App\Integration\Alerts\SyncAlertService;
 use App\Integration\Enums\Channel;
 use App\Integration\Sync\CatalogPullService;
 use App\Integration\Sync\InteractsWithActiveTsoftTenants;
@@ -101,6 +102,22 @@ class TsoftPullCatalogCommand extends Command
             array_sum(array_column($rows, 3)),
             array_sum(array_column($rows, 4)),
         ));
+
+        // Hata varsa kısa bildirim (servis config kapalıyken hiçbir şey göndermez).
+        if ($anyFailed) {
+            app(SyncAlertService::class)->notify(
+                'catalog-pull',
+                [
+                    'firms' => count($companyIds),
+                    'products' => array_sum(array_column($rows, 1)),
+                    'prices' => array_sum(array_column($rows, 2)),
+                    'stock' => array_sum(array_column($rows, 3)),
+                    'customers' => array_sum(array_column($rows, 4)),
+                    'errors' => array_sum(array_column($rows, 5)),
+                ],
+                'catalog: cekimde hata olustu.',
+            );
+        }
 
         return $anyFailed ? self::FAILURE : self::SUCCESS;
     }
