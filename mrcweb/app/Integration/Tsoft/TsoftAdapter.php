@@ -31,6 +31,7 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
         'fetch_orders',
         'fetch_products',
         'fetch_all_products',
+        'fetch_all_categories',
         'fetch_all_customers',
         'fetch_stock',
         'push_stock',
@@ -164,6 +165,34 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
 
         try {
             $rows = $driver->fetchAllProducts();
+        } catch (Throwable) {
+            return [];
+        }
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * Tüm Tsoft kategorilerini ham satırlar olarak okur (YALNIZCA OKUMA).
+     * Eski sürücülerde yöntem yoksa veya okuma başarısızsa boş dizi döner;
+     * katalog çekimi kategoriler olmadan da sürebilir.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchAllCategories(): array
+    {
+        try {
+            $driver = $this->driver();
+        } catch (Throwable) {
+            return [];
+        }
+
+        if (! is_object($driver) || ! method_exists($driver, 'fetchAllCategories')) {
+            return [];
+        }
+
+        try {
+            $rows = $driver->fetchAllCategories();
         } catch (Throwable) {
             return [];
         }

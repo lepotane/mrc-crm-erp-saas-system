@@ -430,6 +430,30 @@ final class LegacyRest1Driver
     }
 
     /**
+     * Tüm Tsoft kategorilerini okur (YALNIZCA OKUMA, ham satırlar).
+     *
+     * Doğrulanmış uç: POST /rest1/category/getCategories — filtre gerekmez,
+     * yaklaşık 40 kategori döner (CategoryId, CategoryCode, CategoryName, ...).
+     * Kategori adları İngilizcedir; çeviri MRC tarafında yapılır.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchAllCategories(): array
+    {
+        $response = $this->post('/category/getCategories', []);
+        $this->assertSuccessful($response, 'Kategoriler alınamadı');
+
+        $categories = [];
+        foreach ($this->rows($response) as $row) {
+            if (is_array($row)) {
+                $categories[] = $row;
+            }
+        }
+
+        return $categories;
+    }
+
+    /**
      * Tüm Tsoft müşterilerini sayfalayarak okur (YALNIZCA OKUMA, ham satırlar).
      *
      * Doğrulanmış uç: POST /rest1/customer/getCustomers — `limit` (max 500)
@@ -734,6 +758,7 @@ final class LegacyRest1Driver
 
         foreach ([
             'Data', 'data', 'Orders', 'orders', 'Products', 'products', 'Customers', 'customers',
+            'Categories', 'categories',
         ] as $key) {
             if (isset($json[$key]) && is_array($json[$key])) {
                 return array_is_list($json[$key]) ? $json[$key] : [$json[$key]];

@@ -2,9 +2,12 @@
 
 namespace App\Integration\Sync;
 
+use App\Integration\Canonical\CanonicalProduct;
+use App\Integration\Translate\ProductNameTranslator;
 use App\Integration\Tsoft\TsoftAdapter;
 use App\Integration\Tsoft\TsoftMapper;
 use App\Models\Product;
+use App\Models\ProductCategory;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -58,6 +61,16 @@ final class CatalogPullService
             $summary['errors'][] = 'products: okunamadi.';
         }
 
+        // 1b) Kategoriler TEK kez okunur ve yerel product_categories tablosuna
+        // yansitilir (salt okunur Tsoft tarafi; hicbir yazma ucu cagrilmaz).
+        $categoryMaps = ['by_name' => [], 'by_code' => []];
+        try {
+            $categoryMaps = $this->syncCategories($companyId, $this->fetchCategoryRows($companyId, $adapter));
+        } catch (Throwable) {
+            $summary['errors'][] = 'categories: okunamadi.';
+            $categoryMaps = ['by_name' => [], 'by_code' => []];
+        }
+
         // 2) Urunler: MrcResyncService::importProducts() ile bire bir ayni upsert.
         $currency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
         foreach ($rawProducts as $index => $raw) {
@@ -70,26 +83,9 @@ final class CatalogPullService
                     continue;
                 }
 
-                $sale = $this->pick($raw, [
-                    'sale_price', 'salePrice', 'SellingPrice', 'price', 'Price', 'attributes.salePrice',
-                ], '0');
-                $tax = $this->pick($raw, ['tax_rate', 'taxRate', 'Vat', 'vat', 'attributes.taxRate'], '0');
-                $rowCurrency = $this->pick($raw, [
-                    'currency', 'currency_code', 'currencyCode', 'Currency', 'attributes.currency',
-                ], $currency);
-
                 Product::updateOrCreate(
                     ['company_id' => $companyId, 'sku' => $canonical->sku],
-                    [
-                        'name' => mb_substr($canonical->name !== '' ? $canonical->name : $canonical->sku, 0, 190),
-                        'barcode' => $canonical->barcode === null
-                            ? null
-                            : mb_substr($canonical->barcode, 0, 64),
-                        'currency_code' => strtoupper(mb_substr((string) $rowCurrency, 0, 3)),
-                        'sale_price' => $this->decimal($sale),
-                        'tax_rate' => $this->decimal($tax, 2),
-                        'track_inventory' => true,
-                    ],
+                    $this->productAttributes($companyId, $canonical, $raw, $categoryMaps, $currency),
                 );
 
                 $summary['products']++;
@@ -229,6 +225,160 @@ final class CatalogPullService
         }
 
         return $summary;
+    }
+
+    /**
+     * Kategori satırlarını TEK seferde okur (adapter üzerinden salt okunur sürücü).
+     * Eski sürücülerde yöntem yoksa veya okuma başarısızsa boş dizi döner.
+     * Çağıran adapter'ı zaten çözdüyse tekrar çözümlemeden onu kullanır.
+     *
+     * @param  object|null  $adapterOverride  pull() içinde zaten çözülmüş adapter
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchCategoryRows(int $companyId, ?object $adapterOverride = null): array
+    {
+        try {
+            $adapter = $adapterOverride ?? app(TsoftAdapter::class, ['company' => $companyId]);
+            if (! is_object($adapter) || ! method_exists($adapter, 'fetchAllCategories')) {
+                return [];
+            }
+
+            $rows = $adapter->fetchAllCategories();
+        } catch (Throwable) {
+            return [];
+        }
+
+        if (! is_array($rows)) {
+            return [];
+        }
+
+        return array_values(array_filter($rows, 'is_array'));
+    }
+
+    /**
+     * Tsoft kategori satırlarından yerel kategorileri upsert eder ve
+     * "normalize edilmiş ad/kod => yerel id" eşleme haritalarını döndürür.
+     *
+     * @param  array<int,array<string,mixed>>  $rows  ham /rest1/category/getCategories satırları
+     * @return array{by_name:array<string,int>,by_code:array<string,int>}
+     */
+    public function syncCategories(int $companyId, array $rows): array
+    {
+        $maps = ['by_name' => [], 'by_code' => []];
+        $palette = ['#B9FF66', '#459BBE', '#DC6F31', '#BC5FCF', '#4E956A'];
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $name = trim((string) ($row['CategoryName'] ?? $row['categoryName'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            try {
+                $category = ProductCategory::updateOrCreate(
+                    ['company_id' => $companyId, 'name' => mb_substr($name, 0, 120)],
+                    // Deterministik renk: aynı kategori her çekimde aynı rengi alır.
+                    ['color' => $palette[abs(crc32($name)) % count($palette)]],
+                );
+
+                $key = mb_strtolower(trim((string) $category->name), 'UTF-8');
+                if ($key !== '') {
+                    $maps['by_name'][$key] = (int) $category->id;
+                }
+
+                $code = trim((string) ($row['CategoryCode'] ?? $row['categoryCode'] ?? ''));
+                if ($code !== '') {
+                    $maps['by_code'][mb_strtolower($code, 'UTF-8')] = (int) $category->id;
+                }
+            } catch (Throwable) {
+                // Bozuk satır tüm katalog çekimini bozmasın; genel hata yeterli.
+                continue;
+            }
+        }
+
+        return $maps;
+    }
+
+    /**
+     * Tek ürün için ortak upsert alanlarını üretir. CatalogPullService ve
+     * MrcResyncService aynı veri kalitesi kurallarını kullansın diye ortak nokta.
+     *
+     * Orijinal İngilizce ad name_en'de saklanır; name alanı best-effort çevrilir.
+     * Barkod boşsa üretilir, mevcut dolu barkod asla ezilmez.
+     *
+     * @param  array{by_name:array<string,int>,by_code:array<string,int>}  $categoryMaps
+     * @param  array<string,mixed>  $raw
+     * @return array<string,mixed>
+     */
+    public function productAttributes(
+        int $companyId,
+        CanonicalProduct $canonical,
+        array $raw,
+        array $categoryMaps,
+        string $defaultCurrency,
+    ): array {
+        $english = (string) $canonical->name;
+        $translated = (new ProductNameTranslator)->toTurkish($english);
+        $localizedName = trim($translated) !== '' ? $translated : $english;
+
+        $incomingBarcode = trim((string) $this->pick($raw, [
+            'Barcode', 'barcode', 'Ean', 'attributes.barcode',
+        ], ''));
+        if ($incomingBarcode === '' && $canonical->barcode !== null) {
+            $incomingBarcode = trim((string) $canonical->barcode);
+        }
+
+        if ($incomingBarcode !== '') {
+            $barcode = mb_substr($incomingBarcode, 0, 64);
+        } else {
+            // Tsoft barkodu yoksa yerel, SKU'ya göre deterministik barkod üret.
+            // Ürünün zaten dolu bir barkodu varsa onu koru (idempotent veri kalitesi).
+            $existing = Product::query()
+                ->where('company_id', $companyId)
+                ->where('sku', $canonical->sku)
+                ->value('barcode');
+            $barcode = $existing !== null && trim((string) $existing) !== ''
+                ? mb_substr((string) $existing, 0, 64)
+                : 'MRC'.strtoupper(substr(md5($canonical->sku), 0, 10));
+        }
+
+        $categoryId = null;
+        $categoryName = mb_strtolower(trim((string) $this->pick($raw, [
+            'DefaultCategoryName', 'defaultCategoryName', 'CategoryName', 'categoryName',
+            'attributes.defaultCategoryName',
+        ], '')), 'UTF-8');
+        $categoryCode = mb_strtolower(trim((string) $this->pick($raw, [
+            'DefaultCategoryCode', 'defaultCategoryCode', 'CategoryCode', 'categoryCode',
+            'attributes.defaultCategoryCode',
+        ], '')), 'UTF-8');
+
+        if ($categoryName !== '' && isset($categoryMaps['by_name'][$categoryName])) {
+            $categoryId = $categoryMaps['by_name'][$categoryName];
+        } elseif ($categoryCode !== '' && isset($categoryMaps['by_code'][$categoryCode])) {
+            $categoryId = $categoryMaps['by_code'][$categoryCode];
+        }
+
+        $sale = $this->pick($raw, [
+            'sale_price', 'salePrice', 'SellingPrice', 'price', 'Price', 'attributes.salePrice',
+        ], '0');
+        $tax = $this->pick($raw, ['tax_rate', 'taxRate', 'Vat', 'vat', 'attributes.taxRate'], '0');
+        $rowCurrency = $this->pick($raw, [
+            'currency', 'currency_code', 'currencyCode', 'Currency', 'attributes.currency',
+        ], $defaultCurrency);
+
+        return [
+            'name' => mb_substr($localizedName !== '' ? $localizedName : $canonical->sku, 0, 190),
+            'name_en' => mb_substr($english, 0, 190),
+            'barcode' => $barcode,
+            'category_id' => $categoryId,
+            'currency_code' => strtoupper(mb_substr((string) $rowCurrency, 0, 3)),
+            'sale_price' => $this->decimal($sale),
+            'tax_rate' => $this->decimal($tax, 2),
+            'track_inventory' => true,
+        ];
     }
 
     /** @param array<string,mixed> $data @param array<int,string> $keys */

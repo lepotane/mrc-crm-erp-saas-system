@@ -140,7 +140,7 @@ final class MrcResyncService
             ): void {
                 $report['deleted'] = $this->deleteBusinessData($companyId, $report);
                 $report['imported']['products'] = $this->importProducts(
-                    $companyId, $external['products'], $report
+                    $companyId, $external['products'], $external['category_rows'] ?? [], $report
                 );
                 $report['imported']['prices'] = $this->importPrices(
                     $companyId, $external['raw_products'], $report
@@ -365,6 +365,9 @@ final class MrcResyncService
         return [
             'raw_products' => $rawProducts,
             'products' => $rawProducts,
+            // Kategoriler de transaction ÖNCESİ okunur; ürün içe aktarımında
+            // aynı eşleme haritası kullanılır (CatalogPullService ile aynı kural).
+            'category_rows' => $this->readCategories($adapter),
             'customers' => $this->readCustomers($adapter, $report),
             'orders' => $this->readOrders($adapter, $report),
             // Sipariş okuması aynı sürücü örneğinde alıcıları da toplar; ek HTTP yok.
@@ -372,6 +375,28 @@ final class MrcResyncService
                 ? $this->readBuyers($adapter, $report)
                 : [],
         ];
+    }
+
+    /**
+     * Kategori listesi ham satırlar olarak okunur (YALNIZCA OKUMA).
+     * Eski sürücülerde yöntem yoksa veya okuma başarısızsa boş dizi döner;
+     * resync kategoriler olmadan da tamamlanabilir.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function readCategories(object $adapter): array
+    {
+        if (! method_exists($adapter, 'fetchAllCategories')) {
+            return [];
+        }
+
+        try {
+            $rows = $adapter->fetchAllCategories();
+        } catch (Throwable) {
+            return [];
+        }
+
+        return is_array($rows) ? array_values(array_filter($rows, 'is_array')) : [];
     }
 
     /**
@@ -598,11 +623,18 @@ final class MrcResyncService
 
     /**
      * @param  array<int,array<string,mixed>>  $rawProducts
+     * @param  array<int,array<string,mixed>>  $categoryRows
      * @param  array<string,mixed>  $report
      */
-    private function importProducts(int $companyId, array $rawProducts, array &$report): int
-    {
+    private function importProducts(
+        int $companyId,
+        array $rawProducts,
+        array $categoryRows,
+        array &$report,
+    ): int {
         $currency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
+        $quality = new CatalogPullService;
+        $categoryMaps = $quality->syncCategories($companyId, $categoryRows);
         $imported = 0;
 
         foreach (array_values($rawProducts) as $index => $raw) {
@@ -615,26 +647,9 @@ final class MrcResyncService
                     continue;
                 }
 
-                $sale = $this->pick($raw, [
-                    'sale_price', 'salePrice', 'SellingPrice', 'price', 'Price', 'attributes.salePrice',
-                ], '0');
-                $tax = $this->pick($raw, ['tax_rate', 'taxRate', 'Vat', 'vat', 'attributes.taxRate'], '0');
-                $rowCurrency = $this->pick($raw, [
-                    'currency', 'currency_code', 'currencyCode', 'Currency', 'attributes.currency',
-                ], $currency);
-
                 Product::updateOrCreate(
                     ['company_id' => $companyId, 'sku' => $canonical->sku],
-                    [
-                        'name' => mb_substr($canonical->name !== '' ? $canonical->name : $canonical->sku, 0, 190),
-                        'barcode' => $canonical->barcode === null
-                            ? null
-                            : mb_substr($canonical->barcode, 0, 64),
-                        'currency_code' => strtoupper(mb_substr((string) $rowCurrency, 0, 3)),
-                        'sale_price' => $this->decimal($sale),
-                        'tax_rate' => $this->decimal($tax, 2),
-                        'track_inventory' => true,
-                    ],
+                    $quality->productAttributes($companyId, $canonical, $raw, $categoryMaps, $currency),
                 );
 
                 $imported++;

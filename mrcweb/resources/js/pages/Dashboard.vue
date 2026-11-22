@@ -2117,12 +2117,7 @@ const tooltipSolKonum = computed(() => {
 const lowStockWidget = computed(() => widgets.value.find((w) => w.key === 'low_stock'));
 const lowStockList = computed(() => {
     const items = lowStockWidget.value?.data?.items || [];
-    if (items.length > 0) return items;
-    return [
-        { product_id: 1, name: 'Fren Balatası Set (Ön)', stock: 3, minimum: 10 },
-        { product_id: 2, name: 'Motor Yağı 5W-30 (4L)', stock: 5, minimum: 15 },
-        { product_id: 3, name: 'Hava Filtresi Premium', stock: 2, minimum: 8 },
-    ];
+    return items.length > 0 ? items : [];
 });
 
 // Son İşlemler & Denetim İzi
