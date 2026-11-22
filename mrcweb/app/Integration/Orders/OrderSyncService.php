@@ -88,6 +88,7 @@ final class OrderSyncService
 
             $document = Document::create([
                 'company_id' => $companyId,
+                'origin' => 'tsoft',
                 'type' => Document::TYPE_SALES_ORDER,
                 'serial' => Document::nextSerial(
                     $companyId,
@@ -109,7 +110,10 @@ final class OrderSyncService
 
             // Kanal metadata'sı: yalnızca beyaz listedeki opak teknik alanlar.
             // notes alanı (KVKK notu) bilinçli olarak değiştirilmez.
+            // `origin` modelin $fillable listesinde olmadığından create() dizisindeki
+            // anahtar sessizce düşer; köken bilgisini forceFill ile garanti ederiz.
             $document->forceFill([
+                'origin' => 'tsoft',
                 'external_no' => $this->externalNo($order),
                 'channel_meta' => $this->channelMeta($order),
             ])->save();

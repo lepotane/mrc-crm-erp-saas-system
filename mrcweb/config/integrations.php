@@ -26,6 +26,11 @@ return [
             'currency' => env('MRC_TSOFT_DEFAULT_CURRENCY', 'TRY'),
             'payment_write_enabled' => env('MRC_TSOFT_PAYMENT_WRITE', false),
             'payment_push_hours' => (int) env('MRC_TSOFT_PAYMENT_PUSH_HOURS', 24),
+            // Yazmalar opt-in'dir; dry_run (integrations.dry_run) yine master gate'tir.
+            'catalog_write_enabled' => env('MRC_TSOFT_CATALOG_WRITE', false),
+            'stock_write_enabled' => env('MRC_TSOFT_STOCK_WRITE', false),
+            'order_write_enabled' => env('MRC_TSOFT_ORDER_WRITE', false),
+            'warehouse_id' => env('MRC_TSOFT_WAREHOUSE_ID', null),
         ],
         'gib' => [
             'enabled' => env('MRC_GIB_ENABLED', false),

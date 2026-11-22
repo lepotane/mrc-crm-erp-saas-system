@@ -13,8 +13,11 @@ class Document extends Model
     use SoftDeletes;
 
     public const TYPE_QUOTE = 'quote';
+
     public const TYPE_SALES_ORDER = 'sales_order';
+
     public const TYPE_INVOICE = 'invoice';
+
     public const TYPE_PURCHASE = 'purchase';
 
     public const TYPE_RETURN = 'return';
@@ -120,6 +123,7 @@ class Document extends Model
         'issue_date', 'due_date', 'currency_code', 'exchange_rate', 'rate_date',
         'subtotal', 'discount_total', 'tax_total', 'grand_total',
         'notes', 'created_by', 'converted_from_id', 'source_document_id',
+        'origin', 'channel_meta', 'external_no',
     ];
 
     protected $casts = [

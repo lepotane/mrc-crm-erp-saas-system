@@ -107,6 +107,7 @@ class QuickSaleController extends DocumentController
 
             $document = Document::create([
                 'company_id' => $companyId,
+                'origin' => 'mrc',
                 'type' => Document::TYPE_INVOICE,
                 'serial' => Document::nextSerial($companyId, Document::TYPE_INVOICE, (int) date('Y')),
                 'party_id' => $data['party_id'],
@@ -124,6 +125,7 @@ class QuickSaleController extends DocumentController
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $request->user()->id,
             ]);
+            $this->forceMrcOrigin($document);
 
             $this->persistLines($companyId, $document, $lines);
 
@@ -165,6 +167,9 @@ class QuickSaleController extends DocumentController
         });
 
         [$document, $payment, $documentStatus] = $result;
+
+        // Fatura ihraç + tahsilat transaction'ı commit edildi; writeback opsiyonel.
+        $this->dispatchTsoftWriteback($companyId, (int) $document->id);
 
         $change = $tendered === null ? 0.0 : round($tendered - $grand, 2);
 

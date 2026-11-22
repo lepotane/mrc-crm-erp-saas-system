@@ -54,3 +54,4 @@ Schedule::command('integration:tsoft-scan-diffs')->hourly()->withoutOverlapping(
 Schedule::command('integration:tsoft-pull-catalog')->hourly()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:reconcile-orders')->dailyAt('03:15')->withoutOverlapping()->onOneServer();
 Schedule::command('integration:accountant-reconcile')->weeklyOn(1, '04:00')->withoutOverlapping()->onOneServer();
+Schedule::command('integration:tsoft-writeback')->everyTenMinutes()->withoutOverlapping()->onOneServer();

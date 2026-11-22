@@ -518,6 +518,48 @@ final class MrcResyncService
     {
         $deleted = [];
 
+        // MRC arayüzünde üretilen belgeler Tsoft yeniden kurulumunda KORUNUR.
+        // Eski veritabanlarında `origin` kolonu yoksa hiçbir belge korunmaz
+        // (mevcut davranış sürer); yeni şemada varsayılan 'tsoft'tur.
+        $mrcIds = [];
+        if (Schema::hasTable('documents') && Schema::hasColumn('documents', 'origin')) {
+            $mrcIds = array_values(array_map(
+                'intval',
+                DB::table('documents')
+                    ->where('company_id', $companyId)
+                    ->where('origin', 'mrc')
+                    ->pluck('id')
+                    ->all(),
+            ));
+        }
+        $report['preserved_mrc_documents'] = count($mrcIds);
+
+        // Korunan belgelerin stok izleri: ihraç/iptal/iade hareketleri.
+        $mrcReferences = [];
+        foreach ($mrcIds as $id) {
+            $mrcReferences[] = 'issue:'.$id;
+            $mrcReferences[] = 'cancel:'.$id;
+            $mrcReferences[] = 'return:'.$id;
+        }
+
+        // FK cascade: korunan belgelerin ürün/cari kayıtları silinirse kalemler
+        // ve stok hareketleri yine kaybolur. Onları da silme kapsamından çıkar.
+        $mrcProductIds = [];
+        $mrcPartyIds = [];
+        if ($mrcIds !== []) {
+            $mrcProductIds = array_values(array_unique(array_map('intval', array_merge(
+                Schema::hasColumn('document_items', 'product_id')
+                    ? DB::table('document_items')->whereIn('document_id', $mrcIds)->pluck('product_id')->all()
+                    : [],
+                $mrcReferences !== [] && Schema::hasColumn('stock_movements', 'product_id')
+                    ? DB::table('stock_movements')->whereIn('reference', $mrcReferences)->pluck('product_id')->all()
+                    : [],
+            ))));
+            $mrcPartyIds = Schema::hasColumn('documents', 'party_id')
+                ? array_values(array_map('intval', DB::table('documents')->whereIn('id', $mrcIds)->pluck('party_id')->all()))
+                : [];
+        }
+
         foreach (self::DELETE_ORDER as $table) {
             if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'company_id')) {
                 $deleted[$table] = 0;
@@ -525,9 +567,30 @@ final class MrcResyncService
                 continue;
             }
 
-            $deleted[$table] = DB::table($table)
-                ->where('company_id', $companyId)
-                ->delete();
+            $query = DB::table($table)->where('company_id', $companyId);
+
+            if ($mrcIds !== []) {
+                if ($table === 'document_items' || $table === 'payments') {
+                    $query->whereNotIn('document_id', $mrcIds);
+                } elseif ($table === 'documents') {
+                    $query->whereNotIn('id', $mrcIds);
+                } elseif ($table === 'stock_movements' && $mrcReferences !== []
+                    && Schema::hasColumn($table, 'reference')) {
+                    $query->whereNotIn('reference', $mrcReferences);
+                } elseif ($table === 'integration_id_map') {
+                    // Yalnızca korunan belgelere ait eşleme kayıtları bırakılır.
+                    $query->where(function ($q) use ($mrcIds) {
+                        $q->where('mrc_type', '!=', 'document')
+                            ->orWhereNotIn('mrc_id', $mrcIds);
+                    });
+                } elseif ($table === 'products' && $mrcProductIds !== []) {
+                    $query->whereNotIn('id', $mrcProductIds);
+                } elseif ($table === 'parties' && $mrcPartyIds !== []) {
+                    $query->whereNotIn('id', $mrcPartyIds);
+                }
+            }
+
+            $deleted[$table] = $query->delete();
         }
 
         return $deleted;

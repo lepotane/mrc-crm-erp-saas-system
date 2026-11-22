@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Concerns\PresentsPaginator;
 use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
+use App\Integration\Sync\TsoftWritebackService;
 use App\Models\Currency;
 use App\Models\Document;
 use App\Models\DocumentItem;
@@ -154,6 +155,7 @@ class DocumentController extends Controller
 
             $document = Document::create([
                 'company_id' => $companyId,
+                'origin' => 'mrc',
                 'type' => $data['type'],
                 'serial' => Document::nextSerial($companyId, $data['type'], (int) substr($issueDate, 0, 4)),
                 'party_id' => $data['party_id'],
@@ -174,6 +176,7 @@ class DocumentController extends Controller
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $request->user()->id,
             ]);
+            $this->forceMrcOrigin($document);
 
             $this->persistLines($companyId, $document, $lines);
 
@@ -310,6 +313,10 @@ class DocumentController extends Controller
             $this->silBelgeAgaci($companyId, $document->refresh(), (int) $request->user()->id, $silinen);
         });
 
+        // Cancel effects + silme transaction içinde tamamlandı; writeback yalnızca
+        // commit sonrası ve hata verirse MRC akışını bozmadan çağrılır.
+        $this->dispatchTsoftWriteback($companyId, (int) $document->id);
+
         ReportCache::bump($companyId);
         Audit::fromRequest($request, 'document.deleted', $companyId, null, [
             'serial' => $serial,
@@ -443,6 +450,10 @@ class DocumentController extends Controller
             }
         });
 
+        // Transaction başarıyla commit edildi; opsiyonel Tsoft yazma köprüsü
+        // MRC'nin kendi yanıtını/yazımlarını asla etkilemez.
+        $this->dispatchTsoftWriteback($companyId, (int) $document->id);
+
         $document->load(['party']);
 
         $payload = ['document' => $this->present($document->refresh())];
@@ -499,6 +510,7 @@ class DocumentController extends Controller
 
             $fresh = Document::create([
                 'company_id' => $companyId,
+                'origin' => 'mrc',
                 'type' => $data['to'],
                 'serial' => Document::nextSerial($companyId, $data['to'], (int) date('Y')),
                 'party_id' => $document->party_id,
@@ -517,6 +529,7 @@ class DocumentController extends Controller
                 'created_by' => $document->created_by,
                 'converted_from_id' => $document->id,
             ]);
+            $this->forceMrcOrigin($fresh);
 
             $lines = $document->items->map(fn ($i) => [
                 'product_id' => $i->product_id,
@@ -572,6 +585,7 @@ class DocumentController extends Controller
 
             $fresh = Document::create([
                 'company_id' => $companyId,
+                'origin' => 'mrc',
                 'type' => $document->type,
                 'serial' => Document::nextSerial($companyId, $document->type, (int) date('Y')),
                 'party_id' => $document->party_id,
@@ -584,6 +598,7 @@ class DocumentController extends Controller
                 'notes' => $document->notes,
                 'created_by' => (int) $request->user()->id,
             ]);
+            $this->forceMrcOrigin($fresh);
 
             $lines = $document->items->map(fn ($i) => [
                 'product_id' => $i->product_id,
@@ -744,6 +759,7 @@ class DocumentController extends Controller
             ]);
 
             $this->persistLines($companyId, $fresh, $built);
+            $this->forceMrcOrigin($fresh);
 
             return $fresh;
         });
@@ -978,6 +994,8 @@ class DocumentController extends Controller
                     'quantity' => $qty,
                     'unit_cost' => $unitCost,
                     'note' => $note,
+                    // İhraç izi: resync sırasında MRC belgesinin stok hareketi korunur.
+                    'reference' => 'issue:'.$document->id,
                     'user_id' => $userId,
                 ]);
 
@@ -1077,6 +1095,33 @@ class DocumentController extends Controller
         }
 
         return $applied;
+    }
+
+    /**
+     * Yeni MRC belgesinin kökenini kalıcı olarak işaretler.
+     *
+     * Document::$fillable henüz `origin` içermediğinden create() dizisindeki
+     * anahtar sessizce düşer; forceFill ile köken bilgisi garanti altına alınır.
+     */
+    protected function forceMrcOrigin(Document $document): void
+    {
+        $document->forceFill(['origin' => 'mrc'])->save();
+    }
+
+    /**
+     * Opsiyonel Tsoft yazma köprüsü. Servis henüz yoksa veya yazma başarısızsa
+     * MRC akışı kesintisiz devam eder (dry_run/yazma izinleri servis içindedir).
+     */
+    protected function dispatchTsoftWriteback(int $companyId, int $documentId): void
+    {
+        try {
+            if (class_exists(TsoftWritebackService::class)) {
+                app(TsoftWritebackService::class)
+                    ->processDocument($companyId, $documentId);
+            }
+        } catch (\Throwable) {
+            // Writeback hatası MRC işlemini veya yanıtını etkilemez.
+        }
     }
 
     protected function presentRow(Document $document): array
