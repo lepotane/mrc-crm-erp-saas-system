@@ -31,6 +31,7 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
         'fetch_orders',
         'fetch_products',
         'fetch_all_products',
+        'fetch_all_customers',
         'fetch_stock',
         'push_stock',
         'push_price',
@@ -135,6 +136,30 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
         } catch (Throwable) {
             return [];
         }
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * Tüm Tsoft müşterilerini ham satırlar olarak okur (YALNIZCA OKUMA).
+     * Kişisel veri içerdiğinden sonuç adapter'da önbelleğe alınmaz.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchAllCustomers(int $limit = 10000): array
+    {
+        try {
+            $driver = $this->driver();
+        } catch (Throwable) {
+            return [];
+        }
+
+        if (! is_object($driver) || ! method_exists($driver, 'fetchAllCustomers')) {
+            return [];
+        }
+
+        // Okuma hatası yutulmaz: çağıran (resync) veriyi silmeden durur.
+        $rows = $driver->fetchAllCustomers($limit);
 
         return is_array($rows) ? $rows : [];
     }

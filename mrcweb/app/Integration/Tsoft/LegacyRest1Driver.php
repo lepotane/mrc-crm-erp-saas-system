@@ -282,6 +282,71 @@ final class LegacyRest1Driver
     }
 
     /**
+     * Tüm Tsoft müşterilerini sayfalayarak okur (YALNIZCA OKUMA, ham satırlar).
+     *
+     * Doğrulanmış uç: POST /rest1/customer/getCustomers — `limit` (max 500)
+     * ve `start` (offset) parametreleri ürün/sipariş uçlarıyla aynıdır.
+     * Müşteri satırları kişisel veri içerdiği için ÖNBELLEĞE YAZILMAZ;
+     * yalnızca çağıran (MRC) tarafında işlenir.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchAllCustomers(int $limit = 10000): array
+    {
+        $pageSize = 500;
+        $limit = max(1, $limit);
+        $customers = [];
+        $seen = [];
+
+        for ($start = 0; $start < $limit; $start += $pageSize) {
+            $response = $this->post('/customer/getCustomers', [
+                'limit' => min($pageSize, $limit - $start),
+                'start' => $start,
+            ]);
+
+            $this->assertSuccessful($response, 'Tüm müşteriler alınamadı');
+
+            $pageRows = array_values(array_filter($this->rows($response), 'is_array'));
+            if ($pageRows === []) {
+                break;
+            }
+
+            $fresh = 0;
+            foreach ($pageRows as $row) {
+                $id = trim((string) ($row['CustomerId'] ?? ''));
+                $code = trim((string) ($row['CustomerCode'] ?? ''));
+
+                if ($id !== '') {
+                    $key = 'id:'.$id;
+                } elseif ($code !== '') {
+                    $key = 'code:'.$code;
+                } else {
+                    $key = 'row:'.md5(serialize($row));
+                }
+
+                if (isset($seen[$key])) {
+                    continue;
+                }
+
+                $seen[$key] = true;
+                $fresh++;
+                $customers[] = $row;
+
+                if (count($customers) >= $limit) {
+                    break 2;
+                }
+            }
+
+            // Aynı sayfa tekrar geliyorsa sayfalama desteklenmiyor; veya son sayfa.
+            if ($fresh === 0 || count($pageRows) < $pageSize) {
+                break;
+            }
+        }
+
+        return $customers;
+    }
+
+    /**
      * Eski çağrılar için takma ad: fiyat okuma aynı ürün uçtan gelir.
      *
      * @param  array<int,mixed>  $skus
@@ -519,7 +584,9 @@ final class LegacyRest1Driver
             return [];
         }
 
-        foreach (['Data', 'data', 'Orders', 'orders', 'Products', 'products'] as $key) {
+        foreach ([
+            'Data', 'data', 'Orders', 'orders', 'Products', 'products', 'Customers', 'customers',
+        ] as $key) {
             if (isset($json[$key]) && is_array($json[$key])) {
                 return array_is_list($json[$key]) ? $json[$key] : [$json[$key]];
             }

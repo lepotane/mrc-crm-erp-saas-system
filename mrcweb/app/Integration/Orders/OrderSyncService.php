@@ -7,6 +7,7 @@ use App\Integration\Canonical\CanonicalPayment;
 use App\Integration\Canonical\SyncResult;
 use App\Integration\Enums\SyncDirection;
 use App\Integration\Support\CredentialVault;
+use App\Integration\Sync\IntegrationIdMap;
 use App\Integration\Tsoft\TsoftAdapter;
 use App\Models\Document;
 use App\Models\Party;
@@ -276,11 +277,51 @@ final class OrderSyncService
     }
 
     /**
-     * Vergi numarasıyla cari çözer; yoksa kişisel veri uydurmadan placeholder açar.
+     * Önce Tsoft müşteri eşlemesini kullanır; yoksa vergi numarasıyla cari çözer,
+     * o da yoksa kişisel veri uydurmadan placeholder açar.
      * FulfillmentSyncService iade belgesi için aynı çözümleyiciyi kullanır.
      */
     public function resolvePartyId(int $companyId, CanonicalOrder $order): int
     {
+        // customer/getCustomers eşlemesi, tax-id aramasından önce gelir.
+        // Korumalar, eşleme modeli olmayan minimal test çiftlerini de destekler.
+        if (class_exists(IntegrationIdMap::class) && method_exists(IntegrationIdMap::class, 'query')) {
+            $keys = [];
+            if (is_array($order->raw ?? null)) {
+                foreach (['CustomerCode', 'CustomerId'] as $field) {
+                    $value = trim((string) ($order->raw[$field] ?? ''));
+                    if ($value !== '') {
+                        $keys[] = $value;
+                    }
+                }
+            }
+
+            if ($keys !== []) {
+                try {
+                    $map = IntegrationIdMap::query()
+                        ->where('company_id', $companyId)
+                        ->where('mrc_type', 'party')
+                        ->where('external_type', 'customer')
+                        ->whereIn('external_key', $keys)
+                        ->orderBy('id')
+                        ->first();
+
+                    if ($map !== null) {
+                        $party = Party::query()
+                            ->where('company_id', $companyId)
+                            ->where('id', (int) $map->mrc_id)
+                            ->first();
+
+                        if ($party instanceof Party) {
+                            return (int) $party->id;
+                        }
+                    }
+                } catch (Throwable) {
+                    // Eşleme okunamazsa vergi numarası/placeholder akışına devam.
+                }
+            }
+        }
+
         $taxId = $order->buyerTaxId;
 
         if ($taxId !== null && trim($taxId) !== '') {

@@ -84,6 +84,7 @@ final class MrcResyncService
                 'products' => 0,
                 'prices' => 0,
                 'stock' => 0,
+                'customers' => 0,
                 'orders' => 0,
                 'parties' => 0,
             ],
@@ -146,7 +147,11 @@ final class MrcResyncService
                 $report['imported']['stock'] = $this->importStock(
                     $companyId, $external['raw_products'], $warehouseId, $report
                 );
-                // Cariler siparislerden once kurulur ki ingest mevcut cariyi bulsun.
+                // Gerçek müşteriler siparişlerden önce kurulur ki ingest cariyi bulsun.
+                $report['imported']['customers'] = $this->importCustomers(
+                    $companyId, $external['customers'] ?? [], $report
+                );
+                // Yalnızca eşlenmemiş siparişler için placeholder cari açılır.
                 $report['imported']['parties'] = $this->importParties(
                     $companyId, $external['orders'], $report
                 );
@@ -215,8 +220,9 @@ final class MrcResyncService
                 'products' => 'Tsoft urun okumasindan products (sku, barkod, ad, para birimi, satis fiyati, vergi orani)',
                 'prices' => 'Ham urun fiyat dizilerinden product_prices (PriceSyncService::pull)',
                 'stock' => 'Urun stok miktarindan acilis girisi (ParallelStockEngine::applyInbound)',
+                'customers' => 'Tsoft musteri listesinden gercek cariler (CustomerId/CustomerCode esleme)',
                 'orders' => 'Son bir yillik siparislerden taslak satis siparisleri (OrderSyncService::ingest)',
-                'parties' => 'Siparis vergi numaralarindan cariler (placeholder ad, kisisel veri yok)',
+                'parties' => 'Esleme bulunmayan siparislerden placeholder cariler (yalnizca vergi numarasi)',
             ],
             'preserved' => [
                 'users', 'companies', 'roles', 'permissions', 'settings',
@@ -354,8 +360,48 @@ final class MrcResyncService
         return [
             'raw_products' => $rawProducts,
             'products' => $rawProducts,
+            'customers' => $this->readCustomers($adapter, $report),
             'orders' => $this->readOrders($adapter, $report),
         ];
+    }
+
+    /**
+     * Müşteri listesi ham satırlar olarak okunur (kişisel veri yalnızca MRC'de).
+     * Eski sürücülerde yöntem yoksa boş dizi döner; resync diğer verilerle sürer.
+     *
+     * @param  array<string,mixed>  $report
+     * @return array<int,array<string,mixed>>
+     */
+    private function readCustomers(object $adapter, array &$report): array
+    {
+        // Eski adapterlar yöntemi sunmuyorsa sessizce boş dizi; cari fallback'i
+        // (importParties) geriye dönük uyumluluk için çalışmaya devam eder.
+        if (! method_exists($adapter, 'fetchAllCustomers')) {
+            return [];
+        }
+
+        try {
+            $rows = $adapter->fetchAllCustomers();
+        } catch (Throwable) {
+            $report['errors'][] = 'Tsoft musterileri okunamadi.';
+
+            return [];
+        }
+
+        if (! is_array($rows)) {
+            $report['errors'][] = 'Tsoft musteri yaniti beklenen bicimde degil.';
+
+            return [];
+        }
+
+        $customers = [];
+        foreach (array_values($rows) as $row) {
+            if (is_array($row)) {
+                $customers[] = $row;
+            }
+        }
+
+        return $customers;
     }
 
     /** @param array<string,mixed> $report @return array<int,CanonicalOrder> */
@@ -614,8 +660,180 @@ final class MrcResyncService
     }
 
     /**
-     * Yalnizca siparislerdeki vergi numaralarindan cari olusturur. Ad/e-posta/
-     * telefon/adres uydurulmaz; placeholder ad kullanilir.
+     * Tsoft customer/getCustomers satırlarından GERÇEK carileri kurar.
+     *
+     * Kişisel veri yalnızca MRC veritabanına yazılır; ham satır hata mesajına
+     * veya günlüğe kopyalanmaz. Tsoft tarafında hiçbir yazma yapılmaz.
+     *
+     * @param  array<int,array<string,mixed>>  $customers
+     * @param  array<string,mixed>  $report
+     */
+    private function importCustomers(int $companyId, array $customers, array &$report): int
+    {
+        $currency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
+        $imported = 0;
+        $seen = [];
+        $usedCodes = [];
+
+        foreach (array_values($customers) as $index => $raw) {
+            if (! is_array($raw) || $raw === []) {
+                continue;
+            }
+
+            try {
+                $filled = false;
+                foreach ([
+                    'CustomerId', 'CustomerCode', 'CompanyName', 'Name', 'Surname',
+                    'TaxNo', 'IdentityNo', 'Email', 'Phone', 'Mobile',
+                ] as $field) {
+                    if (trim((string) ($raw[$field] ?? '')) !== '') {
+                        $filled = true;
+
+                        break;
+                    }
+                }
+                if (! $filled) {
+                    continue;
+                }
+
+                $customerId = trim((string) ($raw['CustomerId'] ?? ''));
+                $customerCode = trim((string) ($raw['CustomerCode'] ?? ''));
+                $externalKey = $customerId !== '' ? $customerId : $customerCode;
+
+                if ($externalKey === '') {
+                    $report['errors'][] = 'customers['.$index.']: kimlik anahtari bos oldugu icin atlandi.';
+
+                    continue;
+                }
+                if (isset($seen[$externalKey])) {
+                    continue;
+                }
+                $seen[$externalKey] = true;
+
+                $code = $customerCode !== '' && mb_strlen($customerCode) <= 20
+                    ? $customerCode
+                    : Party::nextCode($companyId);
+                // nextCode() numerik olmayan kodlarda ayni degeri uretebilir;
+                // bu tur satirlar birbirinin uzerine yazilmasin.
+                if (isset($usedCodes[$code])) {
+                    $code = 'T'.mb_substr(md5($externalKey), 0, 11);
+                }
+                $usedCodes[$code] = true;
+
+                $companyName = trim((string) ($raw['CompanyName'] ?? ''));
+                $personName = trim(
+                    trim((string) ($raw['Name'] ?? '')).' '.trim((string) ($raw['Surname'] ?? ''))
+                );
+                if ($companyName !== '') {
+                    $name = $companyName;
+                } elseif ($personName !== '') {
+                    $name = $personName;
+                } else {
+                    $name = 'Tsoft Müşteri';
+                    Log::warning('mrc.resync.customer_unnamed', [
+                        'company_id' => $companyId,
+                        'row' => $index,
+                    ]);
+                }
+
+                $taxNumber = trim((string) ($raw['TaxNo'] ?? ''));
+                if ($taxNumber === '') {
+                    $taxNumber = trim((string) ($raw['IdentityNo'] ?? ''));
+                }
+                $taxNumber = mb_substr($taxNumber, 0, 20);
+
+                $phone = trim((string) ($raw['Mobile'] ?? ''));
+                if ($phone === '') {
+                    $phone = trim((string) ($raw['Phone'] ?? ''));
+                }
+
+                $addressParts = [];
+                foreach (['Address', 'District', 'Town', 'City'] as $field) {
+                    $value = trim((string) ($raw[$field] ?? ''));
+                    if ($value !== '') {
+                        $addressParts[] = $value;
+                    }
+                }
+
+                $email = trim((string) ($raw['Email'] ?? ''));
+                $city = trim((string) ($raw['City'] ?? ''));
+                $address = mb_substr(implode(', ', $addressParts), 0, 500);
+                $label = $customerId !== '' ? 'CustomerId' : 'CustomerCode';
+
+                $attributes = [
+                    'type' => 'customer',
+                    'name' => mb_substr($name, 0, 190),
+                    'tax_number' => $taxNumber !== '' ? $taxNumber : null,
+                    'phone' => $phone !== '' ? mb_substr($phone, 0, 30) : null,
+                    'email' => $email !== '' ? mb_substr($email, 0, 255) : null,
+                    'address' => $address !== '' ? $address : null,
+                    'city' => $city !== '' ? mb_substr($city, 0, 60) : null,
+                    'currency_code' => $currency,
+                    'notes' => mb_substr('Tsoft müşterisi ('.$label.': '.$externalKey.')', 0, 190),
+                    'is_active' => true,
+                ];
+
+                // Aynı vergi numaralı cari (ör. eski placeholder) varsa tekrar açılmaz.
+                $party = null;
+                if ($taxNumber !== '') {
+                    $party = Party::query()
+                        ->where('company_id', $companyId)
+                        ->where('tax_number', $taxNumber)
+                        ->orderBy('id')
+                        ->first();
+                }
+
+                try {
+                    if ($party instanceof Party) {
+                        // Mevcarinin kodu/siparis baglantisi korunur; veri guncellenir.
+                        $party->fill($attributes)->save();
+                    } else {
+                        $party = Party::updateOrCreate(
+                            ['company_id' => $companyId, 'code' => $code],
+                            $attributes + ['code' => $code],
+                        );
+                    }
+                } catch (Throwable) {
+                    // MySQL'de code/address kolonlari daha kisa olabilir; satiri
+                    // kaybetmemek için şema güvenli uzunlukla bir kez daha dene.
+                    $short = $attributes;
+                    $short['address'] = $short['address'] === null
+                        ? null
+                        : mb_substr($short['address'], 0, 255);
+                    if ($party instanceof Party) {
+                        $party->fill($short)->save();
+                    } else {
+                        $party = Party::updateOrCreate(
+                            ['company_id' => $companyId, 'code' => mb_substr($code, 0, 12)],
+                            $short + ['code' => mb_substr($code, 0, 12)],
+                        );
+                    }
+                }
+
+                IntegrationIdMap::updateOrCreate(
+                    [
+                        'company_id' => $companyId,
+                        'mrc_type' => 'party',
+                        'mrc_id' => (int) $party->id,
+                        'external_type' => 'customer',
+                        'external_key' => mb_substr($externalKey, 0, 190),
+                    ],
+                    [],
+                );
+
+                $imported++;
+            } catch (Throwable) {
+                // Ham veri/müşteri bilgisi hata mesajına yazılmaz.
+                $report['errors'][] = 'customers['.$index.']: cari yazilamadi.';
+            }
+        }
+
+        return $imported;
+    }
+
+    /**
+     * Yalnizca eşlenmemiş siparişlerdeki vergi numaralarindan cari olusturur.
+     * Ad/e-posta/telefon/adres uydurulmaz; placeholder ad kullanilir.
      *
      * @param  array<int,CanonicalOrder>  $orders
      * @param  array<string,mixed>  $report
@@ -624,6 +842,30 @@ final class MrcResyncService
     {
         $taxIds = [];
         foreach ($orders as $order) {
+            // Müşteri customer/getCustomers'dan zaten eşlendiyse placeholder açılmaz.
+            $keys = [];
+            if (is_array($order->raw ?? null)) {
+                foreach (['CustomerCode', 'CustomerId'] as $field) {
+                    $value = trim((string) ($order->raw[$field] ?? ''));
+                    if ($value !== '') {
+                        $keys[] = $value;
+                    }
+                }
+            }
+            $buyerRef = $order->buyerRef ?? null;
+            if ($buyerRef !== null && trim((string) $buyerRef) !== '') {
+                $keys[] = trim((string) $buyerRef);
+            }
+
+            if ($keys !== [] && IntegrationIdMap::query()
+                ->where('company_id', $companyId)
+                ->where('mrc_type', 'party')
+                ->where('external_type', 'customer')
+                ->whereIn('external_key', array_values($keys))
+                ->exists()) {
+                continue;
+            }
+
             $taxId = $order->buyerTaxId === null ? '' : trim($order->buyerTaxId);
 
             if ($taxId !== '') {
