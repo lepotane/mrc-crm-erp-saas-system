@@ -50,6 +50,7 @@ Schedule::command('integration:tsoft-push-stock')->everyFifteenMinutes()->withou
 Schedule::command('integration:tsoft-push-price')->hourly()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:tsoft-push-payment')->everyFifteenMinutes()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:reconcile-stock')->hourly()->withoutOverlapping()->onOneServer();
+Schedule::command('integration:tsoft-scan-diffs')->hourly()->withoutOverlapping()->onOneServer();
 Schedule::command('integration:reconcile-orders')->dailyAt('03:15')->withoutOverlapping()->onOneServer();
 Schedule::command('integration:accountant-reconcile')->weeklyOn(1, '04:00')->withoutOverlapping()->onOneServer();
 

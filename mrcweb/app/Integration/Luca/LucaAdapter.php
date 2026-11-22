@@ -60,6 +60,24 @@ final class LucaAdapter implements ChannelAdapterInterface, VoucherSinkInterface
         return $result;
     }
 
+    /**
+     * Build official muhasebe fişi CSV files via the file driver.
+     *
+     * @param  array<int, CanonicalVoucher>  $vouchers
+     * @return array<int, array{path:string,rows:int,vouchers:int}>
+     */
+    public function buildVoucherFiles(array $vouchers): array
+    {
+        $driver = new FileDriver($this->company);
+
+        // Other drivers may not implement file generation; never break them.
+        if (! method_exists($driver, 'buildVoucherCsv')) {
+            return [];
+        }
+
+        return $driver->buildVoucherCsv($vouchers);
+    }
+
     private function driverName(): string
     {
         $driver = DB::table('tenant_integrations')

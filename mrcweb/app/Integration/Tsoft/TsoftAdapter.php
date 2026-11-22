@@ -30,6 +30,7 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
     private const OPERATIONS = [
         'fetch_orders',
         'fetch_products',
+        'fetch_all_products',
         'fetch_stock',
         'push_stock',
         'push_price',
@@ -95,6 +96,32 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
 
         try {
             $rows = $driver->fetchProducts($skus);
+        } catch (Throwable) {
+            return [];
+        }
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * Filtresiz TAM katalog okuma (sync diff taraması için). YALNIZCA OKUMA.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchAllProducts(): array
+    {
+        try {
+            $driver = $this->driver();
+        } catch (Throwable) {
+            return [];
+        }
+
+        if (! is_object($driver) || ! method_exists($driver, 'fetchAllProducts')) {
+            return [];
+        }
+
+        try {
+            $rows = $driver->fetchAllProducts();
         } catch (Throwable) {
             return [];
         }

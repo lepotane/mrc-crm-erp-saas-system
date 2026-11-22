@@ -1434,5 +1434,6 @@
   "Fiyat sınıfı kur bazlı eşitlendi.": "Price class synced by exchange rate.",
   "Fiyat eşitlenemedi.": "Price could not be synced.",
   "Tümünü Uygula": "Apply to All",
-  "Çıktı alırken fiyat sınıfını değiştirebilirsin.": "You can change the price class while taking the output."
+  "Çıktı alırken fiyat sınıfını değiştirebilirsin.": "You can change the price class while taking the output.",
+  "Entegrasyon Merkezi": "Integration Center"
 }

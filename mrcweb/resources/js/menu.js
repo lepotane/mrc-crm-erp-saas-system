@@ -26,6 +26,7 @@ import {
     CircleUserRound,
     FileText,
     Settings,
+    RefreshCw,
     CircleHelp,
     UserCircle,
 } from 'lucide-vue-next';
@@ -45,6 +46,7 @@ export const MENU = {
     // Şablon & Etiket Builder BİLEREK sol menüde yok: Ayarlar → Yazıcılar
     // sekmesindeki "Tasarımcı" kartından açılıyor (tek giriş noktası).
     sablonlar: { to: '/sablonlar', title: 'Şablon & Etiket Builder', icon: FileText },
+    entegrasyon: { to: '/entegrasyon', title: 'Entegrasyon Merkezi', icon: RefreshCw },
     ayarlar: { to: '/ayarlar', title: 'Sistem & Firma Ayarları', icon: Settings },
     yardim: { to: '/yardim', title: 'Yardım Merkezi', icon: CircleHelp },
     profil: { to: '/profil', title: 'Profilim & Hesap Düzenle', icon: UserCircle },
@@ -70,6 +72,7 @@ export const PRIMARY_MENU = [
  */
 export const SECONDARY_MENU = [
     MENU.kullanicilar,
+    MENU.entegrasyon,
     MENU.ayarlar,
 ];
 
@@ -92,6 +95,7 @@ export const DRAWER_MENU = [
     { ...MENU.hizliSatis, desc: 'Barkodlu hızlı satış', bg: '#DC6F31' },
     { ...MENU.raporlar, desc: 'Kâr-zarar, ciro grafikler', bg: '#3D55B6' },
     { ...MENU.kullanicilar, desc: 'Sınıflar, ekip ve başvurular', bg: '#334155' },
+    { ...MENU.entegrasyon, desc: 'Tsoft farkları ve senkronizasyon', bg: '#459BBE' },
     { ...MENU.ayarlar, desc: 'Firma, döviz ve e-dönüşüm', bg: '#475569' },
 ];
 

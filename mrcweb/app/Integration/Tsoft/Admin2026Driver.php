@@ -186,6 +186,56 @@ final class Admin2026Driver
     }
 
     /**
+     * Tüm kataloğu JSON:API `links.next` zincirini izleyerek okur (YALNIZCA OKUMA).
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchAllProducts(): array
+    {
+        $rows = [];
+        $page = 1;
+        $maxPages = 50;
+
+        do {
+            $response = $this->send('GET', '/catalog/products', [
+                'page[size]' => 100,
+                'page[number]' => $page,
+            ]);
+
+            if (! $response->successful()) {
+                break;
+            }
+
+            $json = $response->json();
+            $data = is_array($json['data'] ?? null) ? $json['data'] : [];
+            $included = is_array($json['included'] ?? null) ? $json['included'] : [];
+
+            foreach ($data as $resource) {
+                if (is_array($resource)) {
+                    $rows[] = $this->flattenProduct($resource, $included);
+                }
+            }
+
+            $next = $json['links']['next'] ?? null;
+            $page++;
+        } while (is_string($next) && $next !== '' && $page <= $maxPages);
+
+        return $rows;
+    }
+
+    /** JSON:API ürün kaynağını, ilişkili varyant/fiyat alanlarıyla düzleştirir. */
+    private function flattenProduct(array $resource, array $included): array
+    {
+        $flat = $this->flattenVariant($resource, $included);
+
+        if (! isset($flat['sku']) && isset($flat['wsSubProductCode'])) {
+            $flat['sku'] = (string) $flat['wsSubProductCode'];
+        }
+
+        return $flat;
+    }
+
+    /**
      * Eski çağrılar için takma ad: fiyat okuma aynı katalog uçtan gelir.
      *
      * @param  array<int,mixed>  $skus

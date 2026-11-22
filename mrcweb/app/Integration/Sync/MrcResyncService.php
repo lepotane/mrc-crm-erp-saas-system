@@ -1,0 +1,741 @@
+<?php
+
+namespace App\Integration\Sync;
+
+use App\Integration\Canonical\CanonicalOrder;
+use App\Integration\Orders\OrderSyncService;
+use App\Integration\Tsoft\TsoftAdapter;
+use App\Integration\Tsoft\TsoftMapper;
+use App\Models\Party;
+use App\Models\Product;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use RuntimeException;
+use Throwable;
+
+/**
+ * MRC iş verisini Tsoft'tan (yalnızca OKUYARAK) yeniden kurar.
+ *
+ * Güvenlik sözleşmesi:
+ *  - Varsayılan davranış dry-run'dır; doğrulama olmadan hiçbir satır silinmez,
+ *    hiçbir kayıt yazılmaz ve dış sistem çağrılmaz.
+ *  - Silme yalnızca açıkça izin verilmiş iş tablolarında, kiracı (company_id)
+ *    filtresiyle ve FK-safe sırada yapılır. Kullanıcı/rolling/yetki/ayar tabloları
+ *    ASLA dokunulmaz.
+ *  - Tsoft adapter'ında yalnızca okuma yöntemleri çağrılır; yazma yöntemleri
+ *    bu sınıftan hiçbir yerde kullanılmaz.
+ *  - Silme + içe aktarma aynı veritabanı transaction'ındadır; dış okumalar
+ *    transaction ÖNCESİ yapılır ki kilitler uzun süre tutulmasın.
+ */
+final class MrcResyncService
+{
+    /** Silinecek tabloların FK-safe sırası (önce çocuklar). */
+    private const DELETE_ORDER = [
+        'document_items',
+        'payments',
+        'stock_movements',
+        'product_prices',
+        'integration_id_map',
+        'integration_stock_state',
+        'sync_diffs',
+        'documents',
+        'products',
+        'contacts',
+        'parties',
+    ];
+
+    /** Tek seferde alınacak azami sipariş sayısı. */
+    private const MAX_ORDERS = 5000;
+
+    public function __construct(
+        private readonly mixed $adapterFactory = null,
+        private readonly mixed $priceSync = null,
+        private readonly mixed $stockEngine = null,
+        private readonly mixed $orderSync = null,
+        private readonly mixed $backupRunner = null,
+    ) {}
+
+    /**
+     * @return array<string,mixed>
+     */
+    public function run(int $companyId, bool $confirm, bool $dryRun, bool $skipBackup): array
+    {
+        $started = microtime(true);
+        $effectiveDryRun = $dryRun || ! $confirm;
+
+        $report = [
+            'company_id' => $companyId,
+            'dry_run' => $effectiveDryRun,
+            'dry_run_requested' => $dryRun,
+            'confirmed' => $confirm,
+            'executed' => false,
+            'status' => 'success',
+            'backup' => [
+                'attempted' => false,
+                'skipped' => $skipBackup || $dryRun,
+                'ok' => false,
+                'file' => null,
+                'message' => null,
+            ],
+            'deleted' => [],
+            'imported' => [
+                'products' => 0,
+                'prices' => 0,
+                'stock' => 0,
+                'orders' => 0,
+                'parties' => 0,
+            ],
+            'errors' => [],
+            'plan' => [],
+            'pre_counts' => [],
+            'elapsed_ms' => 0,
+        ];
+
+        try {
+            $report['pre_counts'] = $this->preCounts($companyId);
+
+            if ($skipBackup) {
+                $report['backup']['message'] = 'Yedek atlandi (--skip-backup); yalnizca yerel gelistirme icin.';
+                Log::warning('mrc.resync.backup_skipped', ['company_id' => $companyId]);
+            } elseif (! $dryRun) {
+                $report['backup'] = $this->backup();
+
+                if (! $report['backup']['ok']) {
+                    $report['errors'][] = 'Yedek alinamadi; silme ve ice aktarma iptal edildi.';
+                    $report['status'] = 'failed';
+
+                    return $this->finish($report, $companyId, $started);
+                }
+            }
+
+            $report['plan'] = $this->buildPlan($report['pre_counts']);
+
+            if ($effectiveDryRun) {
+                $report['plan']['reason'] = $confirm
+                    ? 'dry_run: dis okuma ve yerel yazim yapilmadi.'
+                    : 'confirm eksik: --confirm olmadan hici bir sey silinmez veya yazilmaz.';
+
+                return $this->finish($report, $companyId, $started);
+            }
+
+            // Dis okumalar transaction DISINDA: yavas ag cagrisi DB kilidini tutmasin.
+            // Okuma tamamen basarisizsa silmeye baslamayiz (veri kaybi riski).
+            try {
+                $external = $this->readExternal($companyId, $report);
+            } catch (Throwable) {
+                $report['errors'][] = 'Tsoft okuma basarisiz; silme yapilmadi. Yedekten geri donulebilir.';
+                $report['status'] = 'failed';
+
+                return $this->finish($report, $companyId, $started);
+            }
+
+            $warehouseId = $this->defaultWarehouseId($companyId);
+
+            DB::transaction(function () use (
+                $companyId, $external, $warehouseId, &$report
+            ): void {
+                $report['deleted'] = $this->deleteBusinessData($companyId, $report);
+                $report['imported']['products'] = $this->importProducts(
+                    $companyId, $external['products'], $report
+                );
+                $report['imported']['prices'] = $this->importPrices(
+                    $companyId, $external['raw_products'], $report
+                );
+                $report['imported']['stock'] = $this->importStock(
+                    $companyId, $external['raw_products'], $warehouseId, $report
+                );
+                // Cariler siparislerden once kurulur ki ingest mevcut cariyi bulsun.
+                $report['imported']['parties'] = $this->importParties(
+                    $companyId, $external['orders'], $report
+                );
+                $report['imported']['orders'] = $this->importOrders(
+                    $companyId, $external['orders'], $report
+                );
+            });
+
+            $report['executed'] = true;
+        } catch (Throwable) {
+            $report['errors'][] = 'Islem basarisiz; degisiklikler geri alindi. '
+                .'Geri donus icin yedek dosyasini kullanin.';
+            $report['status'] = 'failed';
+        }
+
+        if ($report['errors'] !== []) {
+            $report['status'] = 'failed';
+        }
+
+        return $this->finish($report, $companyId, $started);
+    }
+
+    /** @return array<string,int> */
+    private function preCounts(int $companyId): array
+    {
+        $counts = [];
+
+        foreach (self::DELETE_ORDER as $table) {
+            if (! Schema::hasTable($table)) {
+                $counts[$table] = 0;
+
+                continue;
+            }
+
+            if (! Schema::hasColumn($table, 'company_id')) {
+                $counts[$table] = 0;
+
+                continue;
+            }
+
+            $counts[$table] = DB::table($table)
+                ->where('company_id', $companyId)
+                ->count();
+        }
+
+        return $counts;
+    }
+
+    /** @param array<string,int> $counts @return array<string,mixed> */
+    private function buildPlan(array $counts): array
+    {
+        $delete = [];
+        foreach (self::DELETE_ORDER as $table) {
+            $delete[$table] = $counts[$table] ?? 0;
+        }
+
+        return [
+            'delete' => $delete,
+            'import' => [
+                'products' => 'Tsoft urun okumasindan products (sku, barkod, ad, para birimi, satis fiyati, vergi orani)',
+                'prices' => 'Ham urun fiyat dizilerinden product_prices (PriceSyncService::pull)',
+                'stock' => 'Urun stok miktarindan acilis girisi (ParallelStockEngine::applyInbound)',
+                'orders' => 'Son bir yillik siparislerden taslak satis siparisleri (OrderSyncService::ingest)',
+                'parties' => 'Siparis vergi numaralarindan cariler (placeholder ad, kisisel veri yok)',
+            ],
+            'preserved' => [
+                'users', 'companies', 'roles', 'permissions', 'settings',
+                'print_templates', 'modules', 'audit_events', 'notifications',
+                'tenant_integrations', 'migrations',
+            ],
+        ];
+    }
+
+    /**
+     * Yedek: db:dump-php komutunu calistirir ve YENI bir döküm dosyasi arar.
+     * Komut basari döndürse bile dosya uretilmediyse islem iptal edilir.
+     *
+     * @return array<string,mixed>
+     */
+    private function backup(): array
+    {
+        $result = [
+            'attempted' => true,
+            'skipped' => false,
+            'ok' => false,
+            'file' => null,
+            'exit_code' => null,
+            'message' => null,
+        ];
+
+        $dir = (string) config('backup.mrc.db_dump.dir', storage_path('app/db-dumps'));
+        $before = $this->dumpSnapshot($dir);
+        $startedAt = time() - 2;
+
+        try {
+            $runner = $this->backupRunner;
+            // --keep=0: yedek alirken eski dökümleri budamayiz.
+            $exit = is_callable($runner)
+                ? $runner(['--keep' => '0'])
+                : Artisan::call('db:dump-php', ['--keep' => '0']);
+            $result['exit_code'] = is_numeric($exit) ? (int) $exit : null;
+        } catch (Throwable) {
+            $result['message'] = 'db:dump-php komutu calistirilamadi.';
+
+            return $result;
+        }
+
+        if ($result['exit_code'] !== 0) {
+            $result['message'] = 'db:dump-php basarisiz bir cikis kodu döndürdü.';
+
+            return $result;
+        }
+
+        $newFile = null;
+        foreach ($this->dumpSnapshot($dir) as $name => $mtime) {
+            if (($before[$name] ?? 0) < $mtime && $mtime >= $startedAt) {
+                $newFile = $dir.DIRECTORY_SEPARATOR.$name;
+
+                break;
+            }
+        }
+
+        if ($newFile === null || ! is_file($newFile)) {
+            $result['message'] = 'db:dump-php yeni bir döküm dosyasi uretmedi.';
+
+            return $result;
+        }
+
+        $result['ok'] = true;
+        $result['file'] = str_replace(base_path().DIRECTORY_SEPARATOR, '', $newFile);
+
+        return $result;
+    }
+
+    /** @return array<string,int> */
+    private function dumpSnapshot(string $dir): array
+    {
+        if (! is_dir($dir)) {
+            return [];
+        }
+
+        $out = [];
+        foreach (glob(rtrim($dir, '/\\').DIRECTORY_SEPARATOR.'*.sql.gz') ?: [] as $file) {
+            $out[basename($file)] = (int) filemtime($file);
+        }
+
+        return $out;
+    }
+
+    /**
+     * Dis veriyi salt-okunur yontemlerle toplar. Bu metot HICBIR yazi yapmaz.
+     *
+     * @param  array<string,mixed>  $report
+     * @return array<string,array<int,mixed>>
+     */
+    private function readExternal(int $companyId, array &$report): array
+    {
+        $adapter = $this->adapter($companyId);
+
+        $method = null;
+        if (method_exists($adapter, 'fetchAllProducts')) {
+            $method = 'fetchAllProducts';
+        } elseif (method_exists($adapter, 'fetchProducts')) {
+            $method = 'fetchProducts';
+        }
+
+        if ($method === null) {
+            throw new RuntimeException('Tsoft urun okuma yontemi desteklenmiyor.');
+        }
+
+        try {
+            $raw = $method === 'fetchAllProducts'
+                ? $adapter->fetchAllProducts()
+                : $adapter->fetchProducts([]);
+        } catch (Throwable) {
+            throw new RuntimeException('Tsoft urunleri okunamadi.');
+        }
+
+        if (! is_array($raw)) {
+            throw new RuntimeException('Tsoft urun yaniti beklenen bicimde degil.');
+        }
+
+        $rawProducts = [];
+        $skipped = 0;
+        foreach (array_values($raw) as $row) {
+            if (is_array($row)) {
+                $rawProducts[] = $row;
+
+                continue;
+            }
+
+            $skipped++;
+        }
+
+        if ($skipped > 0) {
+            $report['errors'][] = $skipped.' urun satiri beklenen bicimde olmadigi icin atlandi.';
+        }
+
+        return [
+            'raw_products' => $rawProducts,
+            'products' => $rawProducts,
+            'orders' => $this->readOrders($adapter, $report),
+        ];
+    }
+
+    /** @param array<string,mixed> $report @return array<int,CanonicalOrder> */
+    private function readOrders(object $adapter, array &$report): array
+    {
+        if (! method_exists($adapter, 'fetchOrders')) {
+            $report['errors'][] = 'Tsoft siparis okuma yontemi desteklenmiyor.';
+
+            return [];
+        }
+
+        try {
+            $rows = $adapter->fetchOrders(now()->subYear(), self::MAX_ORDERS);
+        } catch (Throwable) {
+            $report['errors'][] = 'Tsoft siparisleri okunamadi.';
+
+            return [];
+        }
+
+        if (! is_array($rows)) {
+            $report['errors'][] = 'Tsoft siparis yaniti beklenen bicimde degil.';
+
+            return [];
+        }
+
+        $orders = [];
+        foreach (array_values($rows) as $index => $row) {
+            try {
+                if ($row instanceof CanonicalOrder) {
+                    $orders[] = $row;
+
+                    continue;
+                }
+
+                if (is_array($row)) {
+                    $orders[] = TsoftMapper::order($row);
+                }
+            } catch (Throwable) {
+                $report['errors'][] = 'orders['.$index.']: siparis donusturulemedi.';
+            }
+        }
+
+        return $orders;
+    }
+
+    private function adapter(int $companyId): object
+    {
+        $factory = $this->adapterFactory;
+        $adapter = is_callable($factory)
+            ? $factory($companyId)
+            : app(TsoftAdapter::class, ['company' => $companyId]);
+
+        if (! is_object($adapter)) {
+            throw new RuntimeException('Tsoft adapteri olusturulamadi.');
+        }
+
+        return $adapter;
+    }
+
+    /**
+     * Yalnizca izinli is tablolarini, kirac filtresiyle ve FK-safe sırada siler.
+     *
+     * @param  array<string,mixed>  $report
+     * @return array<string,int>
+     */
+    private function deleteBusinessData(int $companyId, array &$report): array
+    {
+        $deleted = [];
+
+        foreach (self::DELETE_ORDER as $table) {
+            if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'company_id')) {
+                $deleted[$table] = 0;
+
+                continue;
+            }
+
+            $deleted[$table] = DB::table($table)
+                ->where('company_id', $companyId)
+                ->delete();
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * @param  array<int,array<string,mixed>>  $rawProducts
+     * @param  array<string,mixed>  $report
+     */
+    private function importProducts(int $companyId, array $rawProducts, array &$report): int
+    {
+        $currency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
+        $imported = 0;
+
+        foreach (array_values($rawProducts) as $index => $raw) {
+            try {
+                $canonical = TsoftMapper::product($raw);
+
+                if ($canonical->sku === '') {
+                    $report['errors'][] = 'products['.$index.']: SKU bos oldugu icin atlandi.';
+
+                    continue;
+                }
+
+                $sale = $this->pick($raw, [
+                    'sale_price', 'salePrice', 'SellingPrice', 'price', 'Price', 'attributes.salePrice',
+                ], '0');
+                $tax = $this->pick($raw, ['tax_rate', 'taxRate', 'Vat', 'vat', 'attributes.taxRate'], '0');
+                $rowCurrency = $this->pick($raw, [
+                    'currency', 'currency_code', 'currencyCode', 'Currency', 'attributes.currency',
+                ], $currency);
+
+                Product::updateOrCreate(
+                    ['company_id' => $companyId, 'sku' => $canonical->sku],
+                    [
+                        'name' => mb_substr($canonical->name !== '' ? $canonical->name : $canonical->sku, 0, 190),
+                        'barcode' => $canonical->barcode === null
+                            ? null
+                            : mb_substr($canonical->barcode, 0, 64),
+                        'currency_code' => strtoupper(mb_substr((string) $rowCurrency, 0, 3)),
+                        'sale_price' => $this->decimal($sale),
+                        'tax_rate' => $this->decimal($tax, 2),
+                        'track_inventory' => true,
+                    ],
+                );
+
+                $imported++;
+            } catch (Throwable) {
+                $report['errors'][] = 'products['.$index.']: urun yazilamadi.';
+            }
+        }
+
+        return $imported;
+    }
+
+    /**
+     * @param  array<int,array<string,mixed>>  $rawProducts
+     * @param  array<string,mixed>  $report
+     */
+    private function importPrices(int $companyId, array $rawProducts, array &$report): int
+    {
+        if ($rawProducts === []) {
+            return 0;
+        }
+
+        try {
+            $service = $this->priceSync ?? new PriceSyncService;
+            if (! is_object($service) || ! method_exists($service, 'pull')) {
+                $report['errors'][] = 'PriceSyncService::pull kullanilamiyor.';
+
+                return 0;
+            }
+
+            $result = $service->pull($companyId, $rawProducts);
+
+            return is_array($result) ? (int) ($result['upserted'] ?? 0) : 0;
+        } catch (Throwable) {
+            $report['errors'][] = 'Fiyatlar ice aktarilamadi.';
+
+            return 0;
+        }
+    }
+
+    /**
+     * Dis stok miktari ACILIS GIRISI olarak yazilir; islem bazli hareket degildir.
+     * negatively bir deger giris yapilmaz (sifir kabul edilir).
+     *
+     * @param  array<int,array<string,mixed>>  $rawProducts
+     * @param  array<string,mixed>  $report
+     */
+    private function importStock(
+        int $companyId,
+        array $rawProducts,
+        ?int $warehouseId,
+        array &$report,
+    ): int {
+        try {
+            $engine = $this->stockEngine ?? new ParallelStockEngine;
+            if (! is_object($engine) || ! method_exists($engine, 'applyInbound')) {
+                $report['errors'][] = 'ParallelStockEngine::applyInbound kullanilamiyor.';
+
+                return 0;
+            }
+        } catch (Throwable) {
+            $report['errors'][] = 'Stok motoru olusturulamadi.';
+
+            return 0;
+        }
+
+        $imported = 0;
+        foreach (array_values($rawProducts) as $index => $raw) {
+            try {
+                $sku = (string) $this->pick($raw, [
+                    'sku', 'ProductCode', 'product_code', 'catalogCode', 'attributes.sku',
+                ], '');
+
+                if ($sku === '') {
+                    continue;
+                }
+
+                $quantity = $this->decimal($this->pick($raw, [
+                    'stock', 'Stock', 'quantity', 'available', 'availableStock', 'attributes.quantity',
+                ], '0'));
+
+                if (bccomp($quantity, '0', 4) <= 0) {
+                    continue;
+                }
+
+                $engine->applyInbound(
+                    $companyId,
+                    $sku,
+                    $quantity,
+                    'tsoft',
+                    'resync:'.$sku,
+                    $warehouseId,
+                );
+
+                $imported++;
+            } catch (Throwable) {
+                $report['errors'][] = 'stock['.$index.']: acilis girisi yazilamadi.';
+            }
+        }
+
+        return $imported;
+    }
+
+    /** @param array<int,CanonicalOrder> $orders @param array<string,mixed> $report */
+    private function importOrders(int $companyId, array $orders, array &$report): int
+    {
+        try {
+            $service = $this->orderSync ?? new OrderSyncService;
+            if (! is_object($service) || ! method_exists($service, 'ingest')) {
+                $report['errors'][] = 'OrderSyncService::ingest kullanilamiyor.';
+
+                return 0;
+            }
+        } catch (Throwable) {
+            $report['errors'][] = 'Siparis servisi olusturulamadi.';
+
+            return 0;
+        }
+
+        $imported = 0;
+        foreach (array_values($orders) as $index => $order) {
+            try {
+                // ingest taslak satis siparisi acar; faturalandirma daha sonra yapilir.
+                $service->ingest($companyId, $order);
+                $imported++;
+            } catch (Throwable) {
+                $report['errors'][] = 'orders['.$index.']: siparis ice aktarilamadi.';
+            }
+        }
+
+        return $imported;
+    }
+
+    /**
+     * Yalnizca siparislerdeki vergi numaralarindan cari olusturur. Ad/e-posta/
+     * telefon/adres uydurulmaz; placeholder ad kullanilir.
+     *
+     * @param  array<int,CanonicalOrder>  $orders
+     * @param  array<string,mixed>  $report
+     */
+    private function importParties(int $companyId, array $orders, array &$report): int
+    {
+        $taxIds = [];
+        foreach ($orders as $order) {
+            $taxId = $order->buyerTaxId === null ? '' : trim($order->buyerTaxId);
+
+            if ($taxId !== '') {
+                $taxIds[mb_substr($taxId, 0, 20)] = true;
+            }
+        }
+
+        $imported = 0;
+        foreach (array_keys($taxIds) as $taxNumber) {
+            try {
+                Party::updateOrCreate(
+                    ['company_id' => $companyId, 'tax_number' => $taxNumber],
+                    [
+                        'type' => 'customer',
+                        'code' => Party::nextCode($companyId),
+                        'name' => 'Tsoft Müşteri',
+                        'notes' => 'Tsoft yeniden kurulum: yalnizca vergi numarasi guvenilirdir.',
+                        'is_active' => true,
+                    ],
+                );
+
+                $imported++;
+            } catch (Throwable) {
+                $report['errors'][] = 'parties: cari yazilamadi.';
+            }
+        }
+
+        return $imported;
+    }
+
+    private function defaultWarehouseId(int $companyId): ?int
+    {
+        try {
+            if (! Schema::hasTable('warehouses')) {
+                return null;
+            }
+
+            $id = DB::table('warehouses')
+                ->where('company_id', $companyId)
+                ->orderBy('id')
+                ->value('id');
+
+            return $id === null ? null : (int) $id;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /** @param array<string,mixed> $data @param array<int,string> $keys */
+    private function pick(array $data, array $keys, mixed $default = null): mixed
+    {
+        foreach ($keys as $key) {
+            $value = $data;
+
+            foreach (explode('.', $key) as $segment) {
+                if (! is_array($value) || ! array_key_exists($segment, $value)) {
+                    $value = null;
+
+                    break;
+                }
+
+                $value = $value[$segment];
+            }
+
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return $default;
+    }
+
+    /** Para ve miktarlar her zaman string decimaldir (float kullanilmaz). */
+    private function decimal(mixed $value, int $scale = 4): string
+    {
+        $raw = str_replace(',', '.', (string) $value);
+
+        return bcadd(is_numeric($raw) ? $raw : '0', '0', $scale);
+    }
+
+    /**
+     * @param  array<string,mixed>  $report
+     * @return array<string,mixed>
+     */
+    private function finish(array $report, int $companyId, float $started): array
+    {
+        $report['elapsed_ms'] = (int) round((microtime(true) - $started) * 1000);
+
+        $this->writeSyncLog($companyId, $report);
+
+        return $report;
+    }
+
+    /** @param array<string,mixed> $report */
+    private function writeSyncLog(int $companyId, array $report): void
+    {
+        try {
+            if (! Schema::hasTable('sync_logs')) {
+                return;
+            }
+
+            DB::table('sync_logs')->insert([
+                'company_id' => $companyId,
+                'channel' => 'tsoft',
+                'direction' => 'in',
+                'entity' => 'mrc_resync',
+                'external_ref' => 'resync:'.$companyId,
+                'duration_ms' => (int) ($report['elapsed_ms'] ?? 0),
+                'status' => (string) ($report['status'] ?? 'failed'),
+                // Yalnizca sayilar: ham veri/kisisel veri yazilmaz.
+                'preview' => json_encode([
+                    'dry_run' => (bool) ($report['dry_run'] ?? true),
+                    'deleted' => $report['deleted'] ?? [],
+                    'imported' => $report['imported'] ?? [],
+                    'errors' => count($report['errors'] ?? []),
+                ], JSON_UNESCAPED_UNICODE),
+                'created_at' => now(),
+            ]);
+        } catch (Throwable) {
+            Log::warning('mrc.resync.sync_log_failed', ['company_id' => $companyId]);
+        }
+    }
+}

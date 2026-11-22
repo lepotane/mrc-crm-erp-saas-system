@@ -18,6 +18,18 @@ final class FileDriver
 {
     private const MAX_ROWS = 400;
 
+    /** Official muhasebe fişi upload screen accepts at most 50 vouchers per file. */
+    private const MAX_VOUCHERS_PER_FILE = 50;
+
+    /**
+     * Official "Excel Veri Aktarımı" muhasebe fişi template: exactly 11 columns.
+     * Delimiter is ';' (Türkçe) on the voucher upload screen, not a comma.
+     */
+    private const VOUCHER_COLUMNS = [
+        'Fiş No', 'Fiş Tarihi', 'Hesap Kodu', 'Evrak No', 'Evrak Tarihi',
+        'Açıklama', 'Borç', 'Alacak', 'Miktar', 'Döviz', 'Kur',
+    ];
+
     private const COLUMNS = [
         'Evrak Tarihi', 'Evrak No', 'VKN/TCKN', 'Unvan', 'Aciklama',
         'Matrah %0', 'Matrah %1', 'Matrah %10', 'Matrah %20',
@@ -71,6 +83,153 @@ final class FileDriver
         }
 
         return SyncResult::success($paths[0] ?? null, count($paths).' Luca CSV file(s) generated.');
+    }
+
+    /**
+     * Build official "Muhasebe Fişi" (Excel Veri Aktarımı) CSV files.
+     *
+     * Official format: exactly 11 columns in fixed order, ';' delimiter,
+     * gg.AA.yyyy dates and Turkish decimals (thousands '.', decimal ',').
+     * A file is closed when either 50 vouchers or 400 detail rows is reached.
+     * A voucher is never split across files.
+     *
+     * @param  array<int, CanonicalVoucher>  $vouchers
+     * @return array<int, array{path:string,rows:int,vouchers:int}>
+     */
+    public function buildVoucherCsv(array $vouchers): array
+    {
+        $files = [];
+        $groups = [];
+        $groupVouchers = 0;
+        $groupRows = 0;
+
+        $flush = function () use (&$files, &$groups, &$groupVouchers, &$groupRows): void {
+            if ($groups === []) {
+                return;
+            }
+            $files[] = $this->writeVoucherFile($groups, $groupRows, $groupVouchers);
+            $groups = [];
+            $groupVouchers = 0;
+            $groupRows = 0;
+        };
+
+        foreach ($vouchers as $voucher) {
+            if (! $voucher instanceof CanonicalVoucher) {
+                continue;
+            }
+
+            $lines = array_values($voucher->lines);
+            $rowCount = count($lines);
+
+            if ($rowCount > self::MAX_ROWS) {
+                throw new \RuntimeException(
+                    'Voucher '.$voucher->voucherNumber.' ('.$voucher->externalRef.') has '.$rowCount
+                    .' rows; the Luca voucher template allows at most '.self::MAX_ROWS.' rows per file.'
+                );
+            }
+
+            if ($groupVouchers >= self::MAX_VOUCHERS_PER_FILE
+                || $groupRows + $rowCount > self::MAX_ROWS) {
+                $flush();
+            }
+
+            $groups[] = [$voucher, $lines];
+            $groupVouchers++;
+            $groupRows += $rowCount;
+        }
+
+        $flush();
+
+        return $files;
+    }
+
+    /**
+     * @param  array<int, array{0:CanonicalVoucher,1:array<int,CanonicalVoucherLine>}>  $groups
+     * @return array{path:string,rows:int,vouchers:int}
+     */
+    private function writeVoucherFile(array $groups, int $rows, int $voucherCount): array
+    {
+        $handle = fopen('php://temp', 'r+');
+        if ($handle === false) {
+            throw new \RuntimeException('Unable to create temporary CSV stream for the Luca voucher file.');
+        }
+
+        fputcsv($handle, self::VOUCHER_COLUMNS, ';', '"');
+        foreach ($groups as [$voucher, $lines]) {
+            foreach ($lines as $line) {
+                fputcsv($handle, $this->voucherRow($voucher, $line), ';', '"');
+            }
+        }
+
+        rewind($handle);
+        $content = (string) stream_get_contents($handle);
+        fclose($handle);
+
+        // Character encoding is NOT documented in the official Luca guide.
+        // Keep it tenant-configurable and confirm it with a 1-row test before production use.
+        $encoding = (string) config('integrations.channels.luca.csv_encoding', 'Windows-1254');
+        if (function_exists('mb_convert_encoding')
+            && $encoding !== ''
+            && strtoupper($encoding) !== 'UTF-8') {
+            $content = mb_convert_encoding($content, $encoding, 'UTF-8');
+        }
+
+        $directory = 'integrations/luca/vouchers/'.$this->companyId();
+        $path = $directory.'/voucher_'.date('Ymd_His').'_'.bin2hex(random_bytes(4)).'.csv';
+        Storage::disk('local')->put($path, $content);
+
+        return ['path' => $path, 'rows' => $rows, 'vouchers' => $voucherCount];
+    }
+
+    /** @return array<int, string> exactly 11 official columns */
+    private function voucherRow(CanonicalVoucher $voucher, CanonicalVoucherLine $line): array
+    {
+        $debit = $this->numeric($line->debit);
+        $credit = $this->numeric($line->credit);
+
+        // Standard Turkish accounting import practice: leave the zero side blank, never '0'.
+        $debitCell = $this->isZero($debit) ? '' : $this->turkishAmount($debit);
+        $creditCell = $this->isZero($credit) ? '' : $this->turkishAmount($credit);
+
+        return [
+            $voucher->voucherNumber,                 // Fiş No
+            $voucher->date->format('d.m.Y'),         // Fiş Tarihi (gg.AA.yyyy)
+            $line->accountCode,                      // Hesap Kodu (must exist in Luca's plan)
+            (string) ($voucher->externalRef ?? ''),  // Evrak No
+            $voucher->date->format('d.m.Y'),         // Evrak Tarihi
+            (string) ($line->description ?? ''),     // Açıklama
+            $debitCell,                              // Borç
+            $creditCell,                             // Alacak
+            '',                                      // Miktar (quantity not modelled)
+            (string) ($voucher->currency ?? ''),     // Döviz
+            '',                                      // Kur (blank for a single-currency import)
+        ];
+    }
+
+    private function isZero(string $value): bool
+    {
+        $value = $this->numeric($value);
+
+        return function_exists('bccomp')
+            ? bccomp($value, '0', 4) === 0
+            : abs((float) $value) < 0.000001;
+    }
+
+    /** Turkish decimal formatting without a float round-trip on the stored amount. */
+    private function turkishAmount(string $value): string
+    {
+        $value = $this->numeric($value);
+
+        // bcmath keeps the value as a decimal string; only the final display
+        // uses number_format, so cents are not lost to binary float precision.
+        if (function_exists('bcadd')) {
+            $value = bcadd($value, '0', 2);
+        }
+
+        $parts = array_pad(explode('.', $value, 2), 2, '');
+        $normalized = $parts[0].'.'.str_pad(substr($parts[1], 0, 2), 2, '0');
+
+        return number_format((float) $normalized, 2, ',', '.');
     }
 
     /** @return array<int, string> exactly 15 columns */

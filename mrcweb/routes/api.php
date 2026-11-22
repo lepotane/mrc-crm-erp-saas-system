@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Api\V1\IntegrationDiffController;
+use App\Http\Controllers\Api\V1\AccountMappingController;
 use App\Http\Controllers\Api\V1\IntegrationPriceController;
 use App\Http\Controllers\Api\V1\IntegrationHealthController;
 use App\Http\Controllers\Api\V1\AccountantController;
@@ -302,6 +304,19 @@ Route::prefix('v1')->group(function () {
 
         // Fiyat senkronu: tek ürün / seçili ürünler / tüm ürünler, iki yönlü.
         Route::post('integrations/prices/sync', [IntegrationPriceController::class, 'sync']);
+
+        // Tsoft fark merkezi — salt okunur tarama, seçilenleri MRC'ye aktar.
+        Route::get('integrations/diffs', [IntegrationDiffController::class, 'index']);
+        Route::get('integrations/diffs/summary', [IntegrationDiffController::class, 'summary']);
+        Route::post('integrations/diffs/scan', [IntegrationDiffController::class, 'scan']);
+        Route::post('integrations/diffs/import', [IntegrationDiffController::class, 'import']);
+        Route::post('integrations/diffs/ignore', [IntegrationDiffController::class, 'ignore']);
+
+        // Hesap kodu senkronu — Luca hesap planı içe aktarma + eşleme.
+        Route::get('integrations/accounts', [AccountMappingController::class, 'index']);
+        Route::post('integrations/accounts/import', [AccountMappingController::class, 'import']);
+        Route::post('integrations/accounts/mapping', [AccountMappingController::class, 'store']);
+        Route::get('integrations/accounts/suggest', [AccountMappingController::class, 'suggest']);
 
         // Mali müşavir paneli — fiş onayı, hesap eşleme, GİB dosyaları, Luca aktarımı.
         Route::get('integrations/accountant', [AccountantController::class, 'index']);

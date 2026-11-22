@@ -154,6 +154,67 @@ final class LegacyRest1Driver
     }
 
     /**
+     * Tüm Tsoft ürünlerini sayfalayarak okur (YALNIZCA OKUMA).
+     *
+     * rest1 `/product/getProducts` ucuna boş filtreyle gidildiğinde tüm katalog
+     * döner; `page`/`Page` parametresiyle ilerlenir. Bazı kurulumlar sayfalama
+     * parametresini yok sayıp aynı ilk sayfayı tekrar döndürür; aynı satır
+     * grubu tekrar geldiğinde döngü kırılır.
+     *
+     * NOT: "Tsoft'ta yeni ürün var" uyarısı için MRC SKU'larından yola çıkmak
+     * yetmez — yeni ürün MRC'de hiç bulunmaz. Bu nedenle filtresiz tam katalog
+     * taraması gerekir. Üst sınır 5000 kayıttır (korumalı durdurma).
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchAllProducts(): array
+    {
+        $pageSize = 500;
+        $maxProducts = 5000;
+        $maxPages = (int) ceil($maxProducts / $pageSize);
+        $rows = [];
+        $seen = [];
+
+        for ($page = 1; $page <= $maxPages; $page++) {
+            $response = $this->post('/product/getProducts', [
+                'page' => $page,
+                'Page' => $page,
+                'PageSize' => $pageSize,
+            ]);
+
+            $this->assertSuccessful($response, 'Tüm ürünler alınamadı');
+
+            $pageRows = array_values(array_filter($this->rows($response), 'is_array'));
+            if ($pageRows === []) {
+                break;
+            }
+
+            $fresh = 0;
+            foreach ($pageRows as $row) {
+                $fingerprint = md5(serialize($row));
+                if (isset($seen[$fingerprint])) {
+                    continue;
+                }
+
+                $seen[$fingerprint] = true;
+                $fresh++;
+                $rows[] = $row;
+
+                if (count($rows) >= $maxProducts) {
+                    break 2;
+                }
+            }
+
+            // Sayfalama desteklenmiyorsa aynı satırlar döner; veya son sayfadır.
+            if ($fresh === 0 || count($pageRows) < $pageSize) {
+                break;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
      * Eski çağrılar için takma ad: fiyat okuma aynı ürün uçtan gelir.
      *
      * @param  array<int,mixed>  $skus

@@ -12,6 +12,7 @@ const BorcAlacak = () => import('./pages/BorcAlacak.vue');
 const HizliSatis = () => import('./pages/HizliSatis.vue');
 const Raporlar = () => import('./pages/Raporlar.vue');
 const Yardim = () => import('./pages/Yardim.vue');
+const Entegrasyon = () => import('./pages/Entegrasyon.vue');
 const Sablonlar = () => import('./pages/Sablonlar.vue');
 const Ayarlar = () => import('./pages/Ayarlar.vue');
 const Kullanicilar = () => import('./pages/Kullanicilar.vue');
@@ -121,6 +122,12 @@ const routes = [
                 name: 'sablonlar',
                 component: Sablonlar,
                 meta: { title: 'Yazdırma Şablonları' },
+            },
+            {
+                path: 'entegrasyon',
+                name: 'entegrasyon',
+                component: Entegrasyon,
+                meta: { title: 'Entegrasyon Merkezi' },
             },
             {
                 path: 'ayarlar',
