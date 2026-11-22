@@ -28,6 +28,8 @@ final class TranslateProductNamesTest extends TestCase
     public function test_ceviri_yapilir_ve_ikinci_calismada_onbellek_kullanilir(): void
     {
         Http::fake([
+            // Google ilk denenir; boş gövde MyMemory'ye düşmesini sağlar.
+            'https://translate.googleapis.com/*' => Http::response([], 200),
             'https://api.mymemory.translated.net/*' => Http::response([
                 'responseData' => ['translatedText' => 'Akıllı Anahtar'],
                 'quotaFinished' => false,
@@ -66,7 +68,7 @@ final class TranslateProductNamesTest extends TestCase
             'status' => 'success',
         ]);
 
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Google + MyMemory (Google boş döndü)
 
         // Yeni bir ürün aynı kaynak adla tekrar görünsün: API'ye gidilmemeli.
         $product->update(['name' => 'Smart Key']);
@@ -75,12 +77,14 @@ final class TranslateProductNamesTest extends TestCase
             ->assertSuccessful();
 
         $this->assertSame('Akıllı Anahtar', $product->fresh()->name);
-        Http::assertSentCount(1); // Yalnızca ilk çalışmadaki tek istek.
+        Http::assertSentCount(2); // Yalnızca ilk çalışmadaki iki istek.
     }
 
     public function test_force_olmadan_elle_degistirilmis_ad_ezilmez_force_ile_ezilir(): void
     {
         Http::fake([
+            // Google ilk denenir; boş gövde MyMemory'ye düşmesini sağlar.
+            'https://translate.googleapis.com/*' => Http::response([], 200),
             'https://api.mymemory.translated.net/*' => Http::response([
                 'responseData' => ['translatedText' => 'Akıllı Anahtar'],
                 'quotaFinished' => false,
@@ -112,12 +116,13 @@ final class TranslateProductNamesTest extends TestCase
         ])->assertSuccessful();
 
         $this->assertSame('Akıllı Anahtar', $product->fresh()->name);
-        Http::assertSentCount(1);
+        Http::assertSentCount(2); // Google + MyMemory
     }
 
     public function test_api_hata_verirse_cevrimdisi_sozluge_dusulur(): void
     {
         Http::fake([
+            'https://translate.googleapis.com/*' => Http::response([], 200),
             'https://api.mymemory.translated.net/*' => Http::response(['error' => 'service down'], 500),
         ]);
 
