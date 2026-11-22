@@ -251,6 +251,18 @@ class DashboardWidgetsTest extends TestCase
             'grand_total' => 107.1,
         ]);
 
+        // Yeni gelen Tsoft siparisleri taslak olur; takvimde gorunmeli.
+        $taslak = Document::create([
+            'company_id' => $this->a['company_id'],
+            'type' => Document::TYPE_SALES_ORDER,
+            'serial' => 'SIP-TAKVIM-TASLAK',
+            'party_id' => $party->id,
+            'status' => 'draft',
+            'issue_date' => now()->format('Y-m-d'),
+            'currency_code' => 'EUR',
+            'grand_total' => 24.41,
+        ]);
+
         // Ay disinda kalan bir belge takvimde yer almamali.
         Document::create([
             'company_id' => $this->a['company_id'],
@@ -269,6 +281,7 @@ class DashboardWidgetsTest extends TestCase
         $items = collect($takvim['data']['items']);
 
         $this->assertTrue($items->contains('document_id', $bugun->id));
+        $this->assertTrue($items->contains('document_id', $taslak->id));
         $this->assertFalse($items->contains('serial', 'SIP-TAKVIM-ESKI'));
         $this->assertSame(now()->format('Y-m-d'), $items->firstWhere('document_id', $bugun->id)['due_date']);
     }

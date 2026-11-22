@@ -301,7 +301,10 @@ class WidgetRegistry
 
         $docs = Document::where('company_id', $company->id)
             ->whereIn('type', [Document::TYPE_INVOICE, Document::TYPE_SALES_ORDER])
-            ->whereIn('status', ['confirmed', 'issued', 'partially_paid', 'paid', 'sent'])
+            // Taslak satis siparisleri de acik islemdir; Tsoft'tan yeni gelen
+            // siparisler "Ürün Hazırlanıyor" nedeniyle taslak olur ve takvimde
+            // gorunmezse gunluk akis bos kalir. Iptal edilenler disarida kalir.
+            ->whereIn('status', ['draft', 'confirmed', 'issued', 'partially_paid', 'paid', 'sent'])
             ->whereNotIn('id', $invoiceConvertedIds)
             ->whereNull('deleted_at')
             // ID'ye gore "son 12" belge, takvimde gosterilen ayi hicbir zaman
