@@ -106,7 +106,7 @@
         </button>
 
         <button
-            v-if="getNotifyPermission() !== 'granted'"
+            v-if="notifyPermission !== 'granted' && notifyPermission !== 'unsupported'"
             type="button"
             class="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-full bg-[#212738]/95 backdrop-blur-md border border-[#B9FF66]/30 text-[#B9FF66] text-[11px] font-bold shadow-lg"
             :title="$t('Bildirimleri aç')"
@@ -198,6 +198,8 @@ const authStore = useAuthStore();
 const drafts = ref([]);
 const draftsOpen = ref(false);
 const showNotifyPrompt = ref(false);
+// Reaktif izin durumu: izin verildikten sonra sağ alttaki chip anında kaybolur.
+const notifyPermission = ref(getNotifyPermission());
 const installDismissed = ref(false);
 const onlineBannerDismissed = ref(false);
 
@@ -276,7 +278,10 @@ async function allowNotifications() {
     // sessiz yanıt verir; buton donmuş görünmesin.
     showNotifyPrompt.value = false;
     markNotifyPromptSeen();
-    try { await requestNotifyPermission(); } catch { /* sessiz */ }
+    try {
+        await requestNotifyPermission();
+        notifyPermission.value = getNotifyPermission();
+    } catch { /* sessiz */ }
 }
 
 function skipNotifications() {
@@ -336,10 +341,10 @@ watch(isOnline, (online) => {
 
 onMounted(() => {
     syncScope();
-    const notifyPermission = getNotifyPermission();
-    if (authStore.token && !hasSeenNotifyPrompt() && notifyPermission === 'default') {
+    notifyPermission.value = getNotifyPermission();
+    if (authStore.token && !hasSeenNotifyPrompt() && notifyPermission.value === 'default') {
         showNotifyPrompt.value = true;
-    } else if (notifyPermission === 'granted' || notifyPermission === 'denied') {
+    } else if (notifyPermission.value === 'granted' || notifyPermission.value === 'denied') {
         // Kullanıcı tarayıcıdan izin vermiş/reddetmişse bir daha sorma.
         markNotifyPromptSeen();
     }
