@@ -571,11 +571,23 @@ class WidgetRegistry
     {
         $baslangic = now()->startOfMonth()->subMonths(11)->format('Y-m-d');
 
-        $faturalar = Document::where('company_id', $company->id)
-            ->where('type', Document::TYPE_INVOICE)
-            ->whereIn('status', ['issued', 'partially_paid', 'paid'])
+        // Tsoft'tan gelen satışlar FATURA değil, onaylanmış SATIŞ SİPARİŞİ olarak
+        // aktarılır ve çoğu zaman faturalanmaz. Pano KPI'si "gerçekleşen satış"ı
+        // yansıtmalıdır: ihraç/kısmen ödendi/ödendi FATURALAR + onaylanmış
+        // SATIŞ SİPARİŞLERİ dahil edilir; taslak ve iptal edilmiş kayıtlar
+        // gerçekleşmemiş sayıldığı için hariç tutulur.
+        $belgeler = Document::where('company_id', $company->id)
             ->whereNull('deleted_at')
             ->whereDate('issue_date', '>=', $baslangic)
+            ->where(function ($q) {
+                $q->where(function ($qq) {
+                    $qq->where('type', Document::TYPE_INVOICE)
+                        ->whereIn('status', ['issued', 'partially_paid', 'paid']);
+                })->orWhere(function ($qq) {
+                    $qq->where('type', Document::TYPE_SALES_ORDER)
+                        ->where('status', 'confirmed');
+                });
+            })
             ->get(['id', 'issue_date', 'currency_code', 'grand_total']);
 
         $tahsilatlar = Payment::where('company_id', $company->id)
@@ -583,9 +595,9 @@ class WidgetRegistry
             ->whereDate('paid_at', '>=', $baslangic)
             ->get(['paid_at', 'amount', 'currency_code']);
 
-        // Satış maliyeti (COGS) — belge kalemlerinden.
+        // Satış maliyeti (COGS) — seçilen belgelerin kalemlerinden.
         $cogs = [];
-        $belgeIds = $faturalar->pluck('id')->all();
+        $belgeIds = $belgeler->pluck('id')->all();
         if ($belgeIds !== []) {
             $cogs = DocumentItem::whereIn('document_id', $belgeIds)
                 ->selectRaw('document_id, SUM(cogs) AS toplam')
@@ -598,11 +610,22 @@ class WidgetRegistry
         $belgeAylari = [];
         $ciroAylari = [];
         $cogsAylari = [];
-        foreach ($faturalar as $d) {
+        // Para birimi bazlı kırılım: aynı ayın EUR ve TRY ciroları tek bir
+        // "₺" rakamında toplanmasın; istemci baskın para birimini buradan okur.
+        $ciroParaAylari = [];
+        $cogsParaAylari = [];
+        foreach ($belgeler as $d) {
             $ay = substr((string) $d->issue_date, 0, 7);
-            $ciroAylari[$ay] = round(($ciroAylari[$ay] ?? 0) + (float) $d->grand_total, 2);
+            $tutar = (float) $d->grand_total;
+            $maliyet = $cogs[$d->id] ?? 0;
+            $para = strtoupper((string) ($d->currency_code ?: 'TRY'));
+
+            $ciroAylari[$ay] = round(($ciroAylari[$ay] ?? 0) + $tutar, 2);
             $belgeAylari[$ay] = ($belgeAylari[$ay] ?? 0) + 1;
-            $cogsAylari[$ay] = round(($cogsAylari[$ay] ?? 0) + ($cogs[$d->id] ?? 0), 2);
+            $cogsAylari[$ay] = round(($cogsAylari[$ay] ?? 0) + $maliyet, 2);
+
+            $ciroParaAylari[$ay][$para] = round(($ciroParaAylari[$ay][$para] ?? 0) + $tutar, 2);
+            $cogsParaAylari[$ay][$para] = round(($cogsParaAylari[$ay][$para] ?? 0) + $maliyet, 2);
         }
 
         $tahsilatAylari = [];
@@ -619,6 +642,15 @@ class WidgetRegistry
             $kod = $t->format('Y-m');
             $ciro = $ciroAylari[$kod] ?? 0.0;
             $maliyet = $cogsAylari[$kod] ?? 0.0;
+
+            $paraKirilim = [];
+            foreach (($ciroParaAylari[$kod] ?? []) as $para => $paraCiro) {
+                $paraKirilim[$para] = [
+                    'revenue' => $paraCiro,
+                    'profit' => round($paraCiro - ($cogsParaAylari[$kod][$para] ?? 0), 2),
+                ];
+            }
+
             $aylar[] = [
                 'month' => $kod,
                 'label' => $adlar[(int) $t->format('n') - 1],
@@ -626,6 +658,8 @@ class WidgetRegistry
                 'collection' => $tahsilatAylari[$kod] ?? 0.0,
                 'profit' => round($ciro - $maliyet, 2),
                 'documents' => $belgeAylari[$kod] ?? 0,
+                // Boş aylarda JSON'da [] değil {} dönmesi için object cast.
+                'currencies' => (object) $paraKirilim,
             ];
         }
 

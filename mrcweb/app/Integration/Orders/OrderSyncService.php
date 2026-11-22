@@ -16,6 +16,7 @@ use App\Models\Party;
 use App\Models\Payment;
 use App\Services\DocumentSettlement;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -136,7 +137,7 @@ final class OrderSyncService
                 $tax = Money::percent($net, $line->taxRate);
                 $lineTotal = Money::add($net, $tax);
 
-                $document->items()->create([
+                $itemAttributes = [
                     'company_id' => $companyId,
                     'sort_order' => $index,
                     'name' => $line->name !== null && $line->name !== ''
@@ -151,7 +152,23 @@ final class OrderSyncService
                     'line_discount' => $discount,
                     'line_tax' => $tax,
                     'line_total' => $lineTotal,
-                ]);
+                ];
+
+                // Maliyet (COGS) yeni şemalarda satır bazında tutulur. Eski
+                // veritabanlarında `cogs` kolonu olmayabilir; genel bir uyarı
+                // loglayıp satırı kolonsuz oluşturarak aktarımı sürdürürüz.
+                // Satır içeriği/kişisel veri loga ASLA yazılmaz.
+                try {
+                    $document->items()->create($itemAttributes + [
+                        'cogs' => Money::mul($line->quantity, $line->cost),
+                    ]);
+                } catch (Throwable) {
+                    Log::warning('mrc.order.item_cogs_unavailable', [
+                        'company_id' => $companyId,
+                        'document_id' => (int) $document->id,
+                    ]);
+                    $document->items()->create($itemAttributes);
+                }
 
                 $totals['subtotal'] = Money::add($totals['subtotal'], $subtotal);
                 $totals['discount_total'] = Money::add($totals['discount_total'], $discount);

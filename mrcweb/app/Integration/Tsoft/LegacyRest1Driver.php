@@ -30,6 +30,23 @@ final class LegacyRest1Driver
 {
     private const TOKEN_CACHE_PREFIX = 'tsoft:token:';
 
+    /**
+     * rest1 `order/get` varsayılan sorgusu bazı durumları döndürmez. Canlı
+     * doğrulamada durum bazında ayrı sorgu + OrderId ile tekilleştirme toplam
+     * sipariş sayısını panel API ile aynıya (6158) getirmiştir. Sıfır dönen
+     * kimlikler zararsızdır (gelecekte yeni durumlar eklenirse kapsanır).
+     */
+    private const ORDER_STATUS_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1199, 1201];
+
+    /**
+     * Sipariş okuması sırasında toplanan alıcı satırları (kanonik DTO dışında).
+     * Kişisel veri içerir; yalnızca MRC tarafında cari oluşturma için kullanılır,
+     * asla günlüğe veya hata mesajına yazılmaz.
+     *
+     * @var array<string,array<string,string>>
+     */
+    private array $buyers = [];
+
     public function __construct(
         private readonly int $companyId,
         private readonly string $domain,
@@ -51,6 +68,8 @@ final class LegacyRest1Driver
                 'UpdateDateTimeStart' => $since?->format('Y-m-d H:i:s'),
                 'IsTransferred' => 0,
                 'Archive' => 0,
+                // Ürün kalemleri yalnızca bu anahtarla döner (canlı doğrulandı).
+                'FetchProductData' => 1,
                 'limit' => min($pageSize, $limit - $start),
                 'start' => $start,
             ]);
@@ -74,6 +93,7 @@ final class LegacyRest1Driver
                 }
                 $seen[$key] = true;
                 $fresh++;
+                $this->collectBuyer($row);
                 $orders[] = TsoftMapper::order($row);
                 if (count($orders) >= $limit) {
                     break 2;
@@ -88,50 +108,129 @@ final class LegacyRest1Driver
         return $orders;
     }
 
-    /** Tüm siparişler (arşivlenmiş/aktarılmış dahil) — tek seferlik tam aktarım için. */
+    /**
+     * Tüm siparişler (arşivlenmiş/aktarılmış dahil) — tek seferlik tam aktarım için.
+     *
+     * Canlı doğrulamada filtresiz sorgu yalnızca 5791 sipariş döndürürken durum
+     * bazında sorguların birleşimi 6158 sipariş vermiştir. Bu nedenle her durum
+     * kimliği ayrı ayrı, 500'lük sayfalarla okunur ve OrderId üzerinden
+     * tekilleştirilir. Hata mesajları maskelenir; sır/alıcı verisi sızmaz.
+     *
+     * @return array<int, CanonicalOrder>
+     */
     public function fetchAllOrders(int $limit = 10000): array
     {
+        $limit = max(1, $limit);
         $pageSize = 500;
         $orders = [];
         $seen = [];
 
-        for ($start = 0; $start < $limit; $start += $pageSize) {
-            $response = $this->post('/order/get', [
-                'limit' => min($pageSize, $limit - $start),
-                'start' => $start,
-            ]);
+        foreach (self::ORDER_STATUS_IDS as $statusId) {
+            for ($start = 0; $start < $limit; $start += $pageSize) {
+                $response = $this->post('/order/get', [
+                    'OrderStatusId' => $statusId,
+                    // Sipariş kalemleri yalnızca bu anahtarla döner (canlı doğrulandı).
+                    'FetchProductData' => 1,
+                    'limit' => min($pageSize, $limit - $start),
+                    'start' => $start,
+                ]);
 
-            $this->assertSuccessful($response, 'Tüm siparişler alınamadı');
+                $this->assertSuccessful($response, 'Tüm siparişler alınamadı');
 
-            $rows = $this->rows($response);
-            if ($rows === []) {
-                break;
+                $rows = $this->rows($response);
+                if ($rows === []) {
+                    break;
+                }
+
+                $fresh = 0;
+                foreach ($rows as $row) {
+                    if (! is_array($row)) {
+                        continue;
+                    }
+
+                    $code = (string) ($row['OrderCode'] ?? '');
+                    $orderId = trim((string) ($row['OrderId'] ?? ''));
+                    $key = $orderId !== '' ? 'id:'.$orderId : ($code !== '' ? 'code:'.$code : 'row:'.md5(serialize($row)));
+                    if (isset($seen[$key])) {
+                        continue;
+                    }
+                    $seen[$key] = true;
+                    $fresh++;
+
+                    $this->collectBuyer($row);
+                    $orders[] = TsoftMapper::order($row);
+
+                    if (count($orders) >= $limit) {
+                        break 2;
+                    }
+                }
+
+                if ($fresh === 0 || count($rows) < $pageSize) {
+                    break;
+                }
             }
 
-            $fresh = 0;
-            foreach ($rows as $row) {
-                if (! is_array($row)) {
-                    continue;
-                }
-                $code = (string) ($row['OrderCode'] ?? '');
-                $key = $code !== '' ? $code : md5(serialize($row));
-                if (isset($seen[$key])) {
-                    continue;
-                }
-                $seen[$key] = true;
-                $fresh++;
-                $orders[] = TsoftMapper::order($row);
-                if (count($orders) >= $limit) {
-                    break 2;
-                }
-            }
-
-            if ($fresh === 0 || count($rows) < $pageSize) {
+            if (count($orders) >= $limit) {
                 break;
             }
         }
 
         return $orders;
+    }
+
+    /**
+     * Sipariş okuması sırasında toplanan alıcı satırları (ek HTTP çağrısı yok).
+     * Kişisel veri içerir; yalnızca MRC tarafında cari oluşturma için kullanılır.
+     *
+     * @return array<int,array<string,string>>
+     */
+    public function orderBuyers(): array
+    {
+        return array_values($this->buyers);
+    }
+
+    /**
+     * Misafir siparişlerde CustomerName boş/boşluk olabilir; o zaman e-posta
+     * (CustomerUsername) yedek addır. Panel API'den gelen gerçek ad varsa
+     * adapter tarafında bu satırın üzerine yazılır.
+     */
+    private function collectBuyer(array $row): void
+    {
+        $code = trim((string) ($row['CustomerCode'] ?? ''));
+        $id = (string) ($row['CustomerId'] ?? '');
+
+        $name = '';
+        foreach ([$row['CustomerName'] ?? null, $row['CustomerUsername'] ?? null] as $candidate) {
+            $value = is_scalar($candidate) ? trim((string) $candidate) : '';
+            if ($value !== '') {
+                $name = $value;
+
+                break;
+            }
+        }
+        if ($name === '') {
+            return;
+        }
+
+        $key = $code.'|'.$id;
+        if (isset($this->buyers[$key])) {
+            return;
+        }
+
+        $username = trim((string) ($row['CustomerUsername'] ?? ''));
+        $delivery = $row['DeliveryAddress'] ?? null;
+
+        $this->buyers[$key] = [
+            'code' => $code,
+            'id' => $id,
+            'name' => mb_substr($name, 0, 190),
+            'email' => str_contains($username, '@') ? mb_substr($username, 0, 255) : '',
+            'phone' => mb_substr(trim((string) ($row['CustomerPhone'] ?? '')), 0, 30),
+            'tax' => mb_substr(trim((string) ($row['TaxNumber'] ?? $row['TaxNo'] ?? '')), 0, 20),
+            'city' => is_array($delivery)
+                ? mb_substr(trim((string) ($delivery['City'] ?? '')), 0, 60)
+                : '',
+        ];
     }
 
     public function fetchOrder(string $externalRef): ?CanonicalOrder
@@ -140,12 +239,16 @@ final class LegacyRest1Driver
             'OrderCode' => $externalRef,
             'IsTransferred' => 0,
             'Archive' => 0,
+            // Ürün kalemleri yalnızca bu anahtarla döner (canlı doğrulandı).
+            'FetchProductData' => 1,
         ]);
 
         $this->assertSuccessful($response, 'Sipariş alınamadı');
 
         foreach ($this->rows($response) as $row) {
             if (is_array($row)) {
+                $this->collectBuyer($row);
+
                 return TsoftMapper::order($row);
             }
         }

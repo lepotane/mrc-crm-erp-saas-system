@@ -16,6 +16,7 @@ final class CanonicalOrderLine
         public readonly string $taxRate,
         public readonly string $discountRate = '0',
         public readonly ?string $externalRef = null,
+        public readonly string $cost = '0',
     ) {}
 
     /** @return array<string,mixed> */
@@ -29,6 +30,7 @@ final class CanonicalOrderLine
             'tax_rate' => $this->taxRate,
             'discount_rate' => $this->discountRate,
             'external_ref' => $this->externalRef,
+            'cost' => $this->cost,
         ];
     }
 }

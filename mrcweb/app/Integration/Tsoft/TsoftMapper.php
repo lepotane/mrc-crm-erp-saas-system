@@ -10,6 +10,7 @@ use App\Integration\Canonical\CanonicalStock;
 use App\Integration\Enums\FieldSource;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
+use DateTimeZone;
 use Throwable;
 
 /**
@@ -24,6 +25,14 @@ use Throwable;
 final class TsoftMapper
 {
     /**
+     * rest1 `CargoId` -> kargo firması adı. Yalnızca canlı doğrulanmış eşleme
+     * tutulur; bilinmeyen kimlikler sayısal olarak korunur (kişisel veri değildir).
+     */
+    private const CARGO_COMPANIES = [
+        6 => 'DHL Express',
+    ];
+
+    /**
      * Hem legacy (rest1) hem admin (2026-01) sipariş şekillerini kabul eder.
      * JSON:API kaynağı verilirse `attributes.*` yolları da okunur.
      */
@@ -37,12 +46,14 @@ final class TsoftMapper
             'OrderNumber', 'orderNumber', 'attributes.orderNumber', 'orderNo',
         ]);
 
-        $placedAt = self::date(self::pick($raw, [
-            'OrderDate', 'placedAt', 'createdAt', 'attributes.placedAt', 'attributes.createdAt', 'orderDate',
-        ]));
+        $placedAt = self::orderPlacedAt($raw);
 
+        // rest1 `FetchProductData=1` ile dönen OrderDetails gerçek sipariş
+        // kalemleridir. Eski gövde şekilleri (items/Products/...) yedektir.
         $lines = [];
-        $items = self::pick($raw, ['items', 'Items', 'Products', 'OrderProducts', 'products', 'attributes.items'], []);
+        $items = self::pick($raw, [
+            'OrderDetails', 'items', 'Items', 'Products', 'OrderProducts', 'products', 'attributes.items',
+        ], []);
         if (is_array($items)) {
             foreach ($items as $item) {
                 if (is_array($item)) {
@@ -68,6 +79,34 @@ final class TsoftMapper
             if (array_key_exists($field, $raw)) {
                 $safeRaw[$field] = $raw[$field];
             }
+        }
+
+        // Kanal metadata'sı için beyaz liste. Ad/e-posta/telefon/adres ASLA
+        // eklenmez; yalnızca opak teknik ve para alanları taşınır.
+        $cargoId = self::adminString(self::pick($raw, ['CargoId'], ''));
+        $safeFields = [
+            'PaymentMethod' => self::adminString(self::pick($raw, ['PaymentType'], '')),
+            'PaymentVendor' => self::adminString(self::pick($raw, ['BankTransactionVendor', 'PaymentInfo'], '')),
+            'PaymentBank' => self::adminString(self::pick($raw, ['PaymentBankName', 'Bank'], '')),
+            'PaymentTransactionId' => self::adminString(self::pick($raw, ['TransactionId', 'OrderCode'], '')),
+            'Installment' => self::adminString(self::pick($raw, ['Installment'], 0)),
+            'CargoCompany' => self::CARGO_COMPANIES[$cargoId] ?? $cargoId,
+            'TrackingNumber' => self::adminString(self::pick($raw, ['CargoTrackingCode'], '')),
+            'InvoiceNo' => self::adminString(self::pick($raw, ['InvoiceNumber'], '')),
+            'Platform' => self::adminString(self::pick($raw, ['Platform'], '')),
+            'DiscountTotal' => self::decimal(self::pick($raw, ['DiscountTotal'])),
+            'ShippingTotal' => self::decimal(self::pick($raw, ['ShippingTotal', 'CargoTotal'])),
+            'TaxTotal' => self::decimal(self::pick($raw, ['TaxTotal'])),
+            'SubTotal' => self::decimal(self::pick($raw, ['SubTotal', 'OrderSubtotal'])),
+            'TsoftOrderNo' => self::adminString(self::pick($raw, ['OrderCode'], '')),
+            'OrderStatusId' => self::adminString(self::pick($raw, ['OrderStatusId'], '')),
+            'OrderTotalPrice' => self::decimal(self::pick($raw, ['OrderTotalPrice'])),
+            'CustomerCode' => self::adminString(self::pick($raw, ['CustomerCode'], '')),
+            'CustomerId' => self::adminString(self::pick($raw, ['CustomerId'], '')),
+            'ProductsCount' => self::adminString(self::pick($raw, ['ProductsCount'], count($lines))),
+        ];
+        foreach ($safeFields as $field => $value) {
+            $safeRaw[$field] = $value;
         }
 
         // Ödeme durumunda temkinliyiz: yalnızca faturalanmış, ödendiği bilinen
@@ -142,7 +181,9 @@ final class TsoftMapper
         $createdAt = self::pick($raw, ['createdAt']);
         if ($createdAt !== null && $createdAt !== '' && is_numeric($createdAt)) {
             try {
-                $placedAt = Carbon::createFromTimestampUTC((int) $createdAt);
+                // Tsoft paneli createdAt'i mağaza yerel saatinde (Europe/Istanbul) gösterir;
+                // UTC'ye çevirmek siparişi ertesi/gün önceye kaydırır.
+                $placedAt = Carbon::createFromTimestamp((int) $createdAt, new DateTimeZone('Europe/Istanbul'));
             } catch (Throwable) {
                 $placedAt = null;
             }
@@ -240,21 +281,35 @@ final class TsoftMapper
 
     public static function line(array $raw): CanonicalOrderLine
     {
+        // Ürün adıdır; müşteri kişisel verisi değildir. Varyant kodu varsa adı
+        // ayırt edici kılmak için eklenir (adminOrder aynı kuralı kullanır).
+        $name = self::nullableString(self::pick($raw, ['ProductName', 'productName', 'name', 'title']));
+        $subCode = self::nullableString(self::pick($raw, ['SubProductCode', 'subProductCode', 'variantCode']));
+        if ($name !== null && $subCode !== null && $subCode !== '') {
+            $name = $name.' - '.$subCode;
+        }
+
+        $cost = self::pick($raw, [
+            'BuyingPrice', 'buyingPrice', 'CostPrice', 'costPrice', 'purchasePrice',
+        ]);
+
         return new CanonicalOrderLine(
             self::nullableString(self::pick($raw, [
                 'ProductCode', 'catalogCode', 'sku', 'Sku', 'productCode', 'wsSubProductCode',
             ])),
-            // Ürün adıdır; müşteri kişisel verisi değildir.
-            self::nullableString(self::pick($raw, ['ProductName', 'productName', 'name', 'title'])),
+            $name,
             self::decimal(self::pick($raw, ['Quantity', 'quantity', 'qty', 'attributes.quantity'])),
             self::decimal(self::pick($raw, [
                 'SellingPrice', 'price', 'unitPrice', 'Price', 'attributes.price', 'attributes.unitPrice',
             ])),
             self::decimal(self::pick($raw, ['Vat', 'taxRate', 'vat', 'TaxRate', 'attributes.taxRate'])),
             self::decimal(self::pick($raw, [
-                'Discount', 'discountRate', 'discount', 'attributes.discountRate',
+                'DiscountPercent', 'Discount', 'discountRate', 'discount', 'attributes.discountRate',
             ])),
-            self::nullableString(self::pick($raw, ['id', 'lineId', 'externalRef', 'OrderProductId'])),
+            self::nullableString(self::pick($raw, [
+                'OrderProductId', 'id', 'lineId', 'externalRef', 'ProductId',
+            ])),
+            ($cost === null || $cost === '') ? '0' : self::decimal($cost),
         );
     }
 
@@ -396,6 +451,43 @@ final class TsoftMapper
         }
 
         return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'y', 'paid', 'ok'], true);
+    }
+
+    /**
+     * rest1'de OrderDate alanındaki "Z" mağaza yerel saatinin gösterimidir;
+     * UTC sanıp çevirmek tarihi kaydırır. Güvenilir kaynak sayısal
+     * OrderDateTimeStamp'tir (gerçek UTC); panelin gösterdiği yerel tarihi
+     * Europe/Istanbul ile üretiriz.
+     */
+    private static function orderPlacedAt(array $raw): ?CarbonInterface
+    {
+        $zone = new DateTimeZone('Europe/Istanbul');
+
+        $stamp = self::pick($raw, ['OrderDateTimeStamp', 'orderDateTimeStamp']);
+        if ($stamp !== null && is_numeric($stamp)) {
+            try {
+                return Carbon::createFromTimestamp((int) $stamp, $zone);
+            } catch (Throwable) {
+                // Bozuk damga varsa tarih metnine düş.
+            }
+        }
+
+        $value = self::pick($raw, [
+            'OrderDate', 'placedAt', 'createdAt', 'attributes.placedAt', 'attributes.createdAt', 'orderDate',
+        ]);
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            if (is_numeric($value)) {
+                return Carbon::createFromTimestamp((int) $value, $zone);
+            }
+
+            return Carbon::parse((string) $value, $zone);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     private static function date(mixed $value): ?CarbonInterface

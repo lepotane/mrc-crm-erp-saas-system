@@ -37,6 +37,15 @@ final class AdminApiDriver
 
     private const CACHE_SAFETY_MARGIN = 60;
 
+    /**
+     * Sipariş okuması sırasında toplanan alıcı satırları (kanonik DTO dışında).
+     * Kişisel veri içerir; yalnızca resync'in MRC cari oluşturması için kullanılır,
+     * asla günlüğe veya hata mesajına yazılmaz.
+     *
+     * @var array<string,array<string,string>>
+     */
+    private array $buyers = [];
+
     public function __construct(
         private readonly int $companyId,
         private readonly string $baseUrl,
@@ -82,6 +91,7 @@ final class AdminApiDriver
                 }
 
                 $orders[] = TsoftMapper::adminOrder($row);
+                $this->collectBuyer($row);
                 $fresh++;
 
                 if (count($orders) >= $limit) {
@@ -98,6 +108,75 @@ final class AdminApiDriver
         }
 
         return $orders;
+    }
+
+    /**
+     * fetchAllOrders() sırasında toplanan alıcı satırları. Ek HTTP çağrısı yapmaz;
+     * yalnızca kanonik olmayan, resync'e özel yan kanalıdır (KVKK).
+     *
+     * @return array<int,array<string,string>>
+     */
+    public function orderBuyers(): array
+    {
+        return array_values($this->buyers);
+    }
+
+    /** Tek siparişten alıcı satırı çıkarır; ad yoksa kayıt tutmaz. */
+    private function collectBuyer(array $row): void
+    {
+        $code = trim((string) $this->pick($row, ['customer.wsCode'], ''));
+        $id = trim((string) $this->pick($row, ['customer.id'], ''));
+
+        $name = '';
+        foreach ([
+            $this->pick($row, ['address.billing.name'], ''),
+            $this->pick($row, ['customer.name'], ''),
+            $this->pick($row, ['shippingAddress.name'], ''),
+        ] as $candidate) {
+            $name = trim((string) $candidate);
+            if ($name !== '') {
+                break;
+            }
+        }
+        if ($name === '') {
+            return;
+        }
+
+        $key = $code.'|'.$id;
+        if (isset($this->buyers[$key])) {
+            return;
+        }
+
+        $this->buyers[$key] = [
+            'code' => $code,
+            'id' => $id,
+            'name' => $name,
+            'email' => trim((string) $this->pick($row, ['customer.email'], '')),
+            'phone' => trim((string) $this->pick($row, ['customer.phone'], '')),
+            'tax' => trim((string) $this->pick($row, ['address.billing.taxNumber'], '')),
+            'city' => trim((string) $this->pick($row, ['address.billing.city'], '')),
+        ];
+    }
+
+    /** @param array<int,string> $keys */
+    private function pick(array $data, array $keys, mixed $default = null): mixed
+    {
+        foreach ($keys as $key) {
+            $value = $data;
+            foreach (explode('.', $key) as $segment) {
+                if (! is_array($value) || ! array_key_exists($segment, $value)) {
+                    $value = null;
+
+                    break;
+                }
+                $value = $value[$segment];
+            }
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return $default;
     }
 
     /** @return array<int, CanonicalOrder> */

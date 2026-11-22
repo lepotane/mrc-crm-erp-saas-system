@@ -85,6 +85,7 @@ final class MrcResyncService
                 'prices' => 0,
                 'stock' => 0,
                 'customers' => 0,
+                'order_buyers' => 0,
                 'orders' => 0,
                 'parties' => 0,
             ],
@@ -150,6 +151,10 @@ final class MrcResyncService
                 // Gerçek müşteriler siparişlerden önce kurulur ki ingest cariyi bulsun.
                 $report['imported']['customers'] = $this->importCustomers(
                     $companyId, $external['customers'] ?? [], $report
+                );
+                // rest1 listesinde olmayan misafir/non-member alıcılar siparişlerden kurulur.
+                $report['imported']['order_buyers'] = $this->importOrderBuyers(
+                    $companyId, $external['buyers'] ?? [], $report
                 );
                 // Yalnızca eşlenmemiş siparişler için placeholder cari açılır.
                 $report['imported']['parties'] = $this->importParties(
@@ -362,6 +367,10 @@ final class MrcResyncService
             'products' => $rawProducts,
             'customers' => $this->readCustomers($adapter, $report),
             'orders' => $this->readOrders($adapter, $report),
+            // Sipariş okuması aynı sürücü örneğinde alıcıları da toplar; ek HTTP yok.
+            'buyers' => $adapter instanceof TsoftAdapter
+                ? $this->readBuyers($adapter, $report)
+                : [],
         ];
     }
 
@@ -447,6 +456,42 @@ final class MrcResyncService
         }
 
         return $orders;
+    }
+
+    /**
+     * Sipariş okumasından elde edilen alıcı satırlarını alır (kişisel veri).
+     * Yalnızca MRC tarafında cari oluşturmak için kullanılır; hata mesajları
+     * geneldir, satır içeriği asla günlüğe veya rapora kopyalanmaz.
+     *
+     * @param  array<string,mixed>  $report
+     * @return array<int,array<string,mixed>>
+     */
+    private function readBuyers(object $adapter, array &$report): array
+    {
+        if (! method_exists($adapter, 'fetchAllOrderBuyers')) {
+            return [];
+        }
+
+        try {
+            $rows = $adapter->fetchAllOrderBuyers(self::MAX_ORDERS);
+        } catch (Throwable) {
+            $report['errors'][] = 'Tsoft siparis alicilari okunamadi.';
+
+            return [];
+        }
+
+        if (! is_array($rows)) {
+            return [];
+        }
+
+        $buyers = [];
+        foreach (array_values($rows) as $row) {
+            if (is_array($row)) {
+                $buyers[] = $row;
+            }
+        }
+
+        return $buyers;
     }
 
     private function adapter(int $companyId): object
@@ -825,6 +870,111 @@ final class MrcResyncService
             } catch (Throwable) {
                 // Ham veri/müşteri bilgisi hata mesajına yazılmaz.
                 $report['errors'][] = 'customers['.$index.']: cari yazilamadi.';
+            }
+        }
+
+        return $imported;
+    }
+
+    /**
+     * rest1 customer/getCustomers listesinde yer almayan misafir alıcılar için
+     * sipariş gövdesinden cari kurar. Kişisel veri yalnızca MRC veritabanına
+     * yazılır; ham satır hata mesajına veya günlüğe kopyalanmaz.
+     *
+     * @param  array<int,array<string,mixed>>  $buyers
+     * @param  array<string,mixed>  $report
+     */
+    private function importOrderBuyers(int $companyId, array $buyers, array &$report): int
+    {
+        $currency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
+        $imported = 0;
+        $seen = [];
+
+        foreach (array_values($buyers) as $index => $raw) {
+            if (! is_array($raw)) {
+                continue;
+            }
+
+            try {
+                $name = trim((string) ($raw['name'] ?? ''));
+                if ($name === '') {
+                    continue;
+                }
+
+                $code = trim((string) ($raw['code'] ?? ''));
+                $externalId = trim((string) ($raw['id'] ?? ''));
+                $dedupeKey = $code.'|'.$externalId;
+                if (isset($seen[$dedupeKey])) {
+                    continue;
+                }
+                $seen[$dedupeKey] = true;
+
+                // parties.code varchar(12): uzun misafir kodlari (ts_...) kisaltılır.
+                $partyCode = $code !== '' && mb_strlen($code) <= 12
+                    ? $code
+                    : 'T'.mb_substr(md5($dedupeKey), 0, 11);
+
+                $name = mb_substr($name, 0, 190);
+                $taxNumber = mb_substr(trim((string) ($raw['tax'] ?? '')), 0, 20);
+                $email = mb_substr(trim((string) ($raw['email'] ?? '')), 0, 255);
+                $phone = mb_substr(trim((string) ($raw['phone'] ?? '')), 0, 30);
+                $city = mb_substr(trim((string) ($raw['city'] ?? '')), 0, 60);
+
+                $contactAttributes = [
+                    'name' => $name,
+                    'tax_number' => $taxNumber !== '' ? $taxNumber : null,
+                    'email' => $email !== '' ? $email : null,
+                    'phone' => $phone !== '' ? $phone : null,
+                    'city' => $city !== '' ? $city : null,
+                ];
+
+                $party = Party::query()
+                    ->where('company_id', $companyId)
+                    ->where('code', $partyCode)
+                    ->first();
+
+                if ($party instanceof Party) {
+                    // Gerçek adı olan cari korunur; placeholder/boşsa kişisel veri yazılır.
+                    $currentName = trim((string) $party->name);
+                    if ($currentName === '' || in_array($currentName, ['Tsoft Müşteri', 'TSOFT-ANON'], true)) {
+                        $party->fill($contactAttributes)->save();
+                    }
+                } else {
+                    $attributes = $contactAttributes + [
+                        'type' => 'customer',
+                        'code' => $partyCode,
+                        'currency_code' => $currency,
+                        'notes' => 'Tsoft sipariş müşterisi',
+                        'is_active' => true,
+                    ];
+                    $party = Party::updateOrCreate(
+                        ['company_id' => $companyId, 'code' => $partyCode],
+                        $attributes,
+                    );
+                }
+
+                // Hem opak kodu hem sayısal müşteri kimliği eşlenir (importCustomers ile aynı).
+                $keys = array_filter(
+                    [$code, $externalId],
+                    static fn (string $key): bool => $key !== '' && $key !== '0',
+                );
+                foreach (array_unique($keys) as $externalKey) {
+                    IntegrationIdMap::updateOrCreate(
+                        [
+                            'company_id' => $companyId,
+                            'mrc_type' => 'party',
+                            'mrc_id' => (int) $party->id,
+                            'external_type' => 'customer',
+                            'external_key' => mb_substr($externalKey, 0, 190),
+                        ],
+                        [],
+                    );
+                }
+
+                $imported++;
+            } catch (Throwable) {
+                // Ham veri/kişisel bilgi hata mesajına yazılmaz.
+                $report['errors'][] = 'order_buyers['.$index.']: cari yazilamadi.';
             }
         }
 

@@ -2015,10 +2015,12 @@ const karAnaliziOran = computed(() => {
     const secili = seciliBarObj.value;
     if (!secili) return '—';
 
-    const toplam = aylar.reduce((t, a) => t + Number(a.tutar || 0), 0);
-    if (toplam <= 0) return '—';
+    // `tutar` görüntüleme amaçlı biçimlendirilmiş metindir (₺/€ ve ayırıcılar);
+    // oran hesabı ham sayısal değerlerden yapılmalı, aksi hâlde NaN% görünür.
+    const toplam = aylar.reduce((t, a) => t + Number(a.ham || 0), 0);
+    if (! Number.isFinite(toplam) || toplam <= 0) return '—';
 
-    return `${Math.round((Number(secili.tutar || 0) / toplam) * 100)}%`;
+    return `${Math.round((Number(secili.ham || 0) / toplam) * 100)}%`;
 });
 
 // Ay kapsülleri: son 12 ayın GERÇEK ciro/tahsilat/kâr kırılımı (widget: year_months).
@@ -2028,6 +2030,23 @@ const yearMonthsList = computed(() => yearMonthsWidget.value?.data?.months || []
 
 const seciliAy = ref('');
 
+// Ayın baskın para birimi: mutlak cirosu en büyük olan. Tsoft siparişleri
+// çoğunlukla EUR olduğundan tek bir ₺ etiketiyle gösterilmesi yanıltıcı olur.
+// currencies yoksa/boşsa yıllık finans için kullanılan para birimine düşülür.
+function ayinParaBirimi(a) {
+    const kirilim = a?.currencies || {};
+    let secili = '';
+    let enBuyuk = -1;
+    for (const [kod, deger] of Object.entries(kirilim)) {
+        const mutlak = Math.abs(Number(deger?.revenue || 0));
+        if (mutlak > enBuyuk) {
+            enBuyuk = mutlak;
+            secili = kod;
+        }
+    }
+    return secili || yearFinanceCurrency.value;
+}
+
 const kapsulBarlari = computed(() => {
     const aylar = yearMonthsList.value;
     if (aylar.length === 0) return [];
@@ -2036,14 +2055,18 @@ const kapsulBarlari = computed(() => {
         ? 'revenue'
         : (profitMode.value === 'collection' ? 'collection' : 'profit');
 
-    const liste = aylar.map((a) => ({
-        kod: String(a.month || '').slice(5),
-        ad: a.label,
-        yuzde: 0,
-        islem: a.documents || 0,
-        tutar: formatMoney(a[alan] || 0, yearFinanceCurrency.value),
-        ham: a[alan] || 0,
-    }));
+    const liste = aylar.map((a) => {
+        const para = ayinParaBirimi(a);
+        return {
+            kod: String(a.month || '').slice(5),
+            ad: a.label,
+            yuzde: 0,
+            islem: a.documents || 0,
+            tutar: formatMoney(a[alan] || 0, para),
+            para,
+            ham: a[alan] || 0,
+        };
+    });
 
     // Çubuk yüksekliği: serinin en büyük değerine göre oran.
     const enBuyuk = liste.reduce((m, a) => Math.max(m, Number(a.ham || 0)), 0);
