@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Integration;
 
 use App\Integration\Sync\SyncLog;
+use App\Integration\Translate\GoogleTranslator;
 use App\Integration\Translate\MyMemoryTranslator;
 use App\Integration\Translate\ProductNameTranslator;
 use App\Models\Product;
@@ -28,7 +29,7 @@ class TranslateProductNamesCommand extends Command
 
     protected $description = 'Ürün adlarını MyMemory ile çevirir, önbelleğe alır ve MRC urun.name alanını günceller';
 
-    public function handle(MyMemoryTranslator $translator): int
+    public function handle(GoogleTranslator $google, MyMemoryTranslator $translator): int
     {
         $companyOption = $this->option('company');
         $force = (bool) $this->option('force');
@@ -110,10 +111,16 @@ class TranslateProductNamesCommand extends Command
                         $translated = (string) $cached->translated_text;
                         $stats['cached']++;
                     } else {
-                        $translated = $translator->translate($source);
+                        // Google önce; kotası/IP engeli varsa MyMemory'ye düş.
+                        $translated = $google->translate($source);
+                        $provider = 'google';
+
+                        if ($translated === null || trim($translated) === '') {
+                            $translated = $translator->translate($source);
+                            $provider = 'mymemory';
+                        }
 
                         if ($translated !== null && trim($translated) !== '') {
-                            $provider = 'mymemory';
                             $stats['api']++;
                         } else {
                             // API başarısız/kota bitti: deterministic çevrimdışı sözlük.
