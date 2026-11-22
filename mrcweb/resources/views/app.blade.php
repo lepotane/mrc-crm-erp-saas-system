@@ -8,9 +8,9 @@
     <meta name="description" content="MRC: Ön muhasebe, stok, satış, borç-alacak ve raporlar tek platformda.">
 
     {{-- PWA: mobil ana ekrana "uygulama olarak" kurulum --}}
-    <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="icon" type="image/png" href="/icons/icon-192.png">
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest?v=2">
+    <link rel="icon" type="image/png" href="/icons/icon-192.png?v=2">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=2">
     <meta name="theme-color" content="#191E2C">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">

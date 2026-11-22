@@ -1,7 +1,7 @@
 /* MRC PWA service worker — yalnızca uygulama kabuğunu ve statik varlıkları önbelleğe alır.
  * API yanıtları, oturum/veri bayatlamasın diye ASLA önbelleğe alınmaz. */
-const CACHE = 'mrc-shell-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE = 'mrc-shell-v3';
+const SHELL = ['/', '/manifest.webmanifest?v=2', '/icons/icon-192.png?v=2', '/icons/icon-512.png?v=2'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
