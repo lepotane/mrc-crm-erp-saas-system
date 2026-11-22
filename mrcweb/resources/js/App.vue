@@ -43,45 +43,40 @@
         </button>
     </div>
 
-    <!-- İlk girişte bildirim izni: merkezi modal, her şeyin üstünde -->
+    <!-- İlk girişte bildirim izni: TAM EKRAN DEĞİL, üstte küçük banner.
+         Arkadaki sayfanın tıklamalarını ASLA engellemez. -->
     <div
         v-if="showNotifyPrompt"
-        class="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-        @click.self="skipNotifications"
+        class="fixed top-20 left-1/2 -translate-x-1/2 z-[60] w-[min(26rem,calc(100vw-2rem))] rounded-2xl bg-[#212738] border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-4"
     >
-        <div class="w-full max-w-sm rounded-2xl bg-[#212738] border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-5">
-            <div class="flex items-start gap-3">
-                <div class="w-10 h-10 rounded-xl bg-[#B9FF66]/15 text-[#B9FF66] flex items-center justify-center shrink-0">
-                    <BellRing class="w-5 h-5" />
-                </div>
-                <div class="min-w-0 flex-1">
-                    <p class="text-sm font-black text-white leading-snug">
-                        {{ $t('Bildirimleri açmak ister misiniz?') }}
-                    </p>
-                    <p class="text-[11px] text-[#94A3B8] mt-1">
-                        {{ $t('Hata ve kritik stok uyarılarını telefonunda gör.') }}
-                    </p>
-                </div>
-                <button type="button" class="p-1 text-[#64748B] hover:text-white" :title="$t('Kapat')" @click="skipNotifications">
-                    <X class="w-4 h-4" />
-                </button>
+        <div class="flex items-start gap-3">
+            <div class="w-9 h-9 rounded-xl bg-[#B9FF66]/15 text-[#B9FF66] flex items-center justify-center shrink-0">
+                <BellRing class="w-4 h-4" />
             </div>
-            <div class="flex gap-2 mt-5">
-                <button
-                    type="button"
-                    class="flex-1 px-4 py-2.5 rounded-full bg-[#B9FF66] text-[#131722] text-xs font-black hover:bg-[#a6f050] cursor-pointer"
-                    @click="allowNotifications"
-                >
-                    {{ $t('İzin ver') }}
-                </button>
-                <button
-                    type="button"
-                    class="flex-1 px-4 py-2.5 rounded-full bg-white/5 text-[#94A3B8] text-xs font-bold hover:text-white hover:bg-white/10 cursor-pointer"
-                    @click="skipNotifications"
-                >
-                    {{ $t('Şimdi değil') }}
-                </button>
+            <div class="min-w-0 flex-1">
+                <p class="text-xs font-black text-white leading-snug">
+                    {{ $t('Bildirimleri açmak ister misiniz?') }}
+                </p>
+                <div class="flex gap-2 mt-2.5">
+                    <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-full bg-[#B9FF66] text-[#131722] text-[11px] font-black hover:bg-[#a6f050] cursor-pointer"
+                        @click="allowNotifications"
+                    >
+                        {{ $t('İzin ver') }}
+                    </button>
+                    <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-full bg-white/5 text-[#94A3B8] text-[11px] font-bold hover:text-white hover:bg-white/10 cursor-pointer"
+                        @click="skipNotifications"
+                    >
+                        {{ $t('Şimdi değil') }}
+                    </button>
+                </div>
             </div>
+            <button type="button" class="p-1 text-[#64748B] hover:text-white cursor-pointer" :title="$t('Kapat')" @click="skipNotifications">
+                <X class="w-4 h-4" />
+            </button>
         </div>
     </div>
 
@@ -211,6 +206,7 @@ function skipNotifications() {
 // VAPID anahtarları + PushManager.subscribe() + abonelik endpoint'i gerekir.
 const HEALTH_POLL_MS = 60_000;
 let healthTimer = 0;
+let notifyPromptTimer = 0;
 let lastHealthFingerprint = '';
 
 async function pollIntegrationHealth() {
@@ -254,6 +250,8 @@ onMounted(() => {
     notifyPermission.value = getNotifyPermission();
     if (authStore.token && !hasSeenNotifyPrompt() && notifyPermission.value === 'default') {
         showNotifyPrompt.value = true;
+        // Kullanıcı geçmezse banner kendiliğinden kaybolur; sayfayı engellemez.
+        notifyPromptTimer = window.setTimeout(() => { showNotifyPrompt.value = false; }, 12000);
     } else if (notifyPermission.value === 'granted' || notifyPermission.value === 'denied') {
         // Kullanıcı tarayıcıdan izin vermiş/reddetmişse bir daha sorma.
         markNotifyPromptSeen();
@@ -263,5 +261,6 @@ onMounted(() => {
 
 onUnmounted(() => {
     if (healthTimer) window.clearInterval(healthTimer);
+    if (notifyPromptTimer) window.clearTimeout(notifyPromptTimer);
 });
 </script>
