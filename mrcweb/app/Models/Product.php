@@ -12,6 +12,7 @@ class Product extends Model
         'company_id', 'category_id', 'unit_id', 'name', 'name_en', 'sku', 'barcode',
         'description', 'cost_price', 'sale_price', 'currency_code',
         'tax_rate', 'track_inventory', 'min_stock', 'max_stock',
+        'image_url', 'images',
     ];
 
     /**
@@ -36,6 +37,7 @@ class Product extends Model
         'track_inventory' => 'boolean',
         'min_stock' => 'decimal:4',
         'max_stock' => 'decimal:4',
+        'images' => 'array',
     ];
 
     public function company(): BelongsTo

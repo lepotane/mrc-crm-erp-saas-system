@@ -148,6 +148,9 @@
                             </td>
                             <td class="py-3 text-right">
                                 <div class="inline-flex items-center gap-1.5">
+                                    <button type="button" @click="openTsoftPreview(p)" :title="$t('Tsoft\'a Gönder')" class="p-1.5 rounded-lg text-[#8CD5F4] hover:bg-[#8CD5F4]/15 border border-transparent hover:border-[#8CD5F4]/40 transition-colors cursor-pointer">
+                                        <Upload class="w-4 h-4" />
+                                    </button>
                                     <button type="button" @click="openEdit(p)" :title="$t('Düzenle')" class="p-1.5 rounded-lg text-[#94A3B8] hover:bg-white/10 border border-transparent hover:border-white/20 transition-colors cursor-pointer">
                                         <Pencil class="w-4 h-4" />
                                     </button>
@@ -523,6 +526,38 @@
             </div>
         </div>
 
+        <!-- TSOFT GÖNDERİM ÖNİZLEME / ONAY MODALI -->
+        <div v-if="tsoftPreview" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs" @click.self="closeTsoftPreview">
+            <div class="bg-[#212738] border border-white/15 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-5 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center gap-3 text-[#8CD5F4]">
+                    <div class="w-10 h-10 rounded-2xl bg-[#8CD5F4]/15 border border-[#8CD5F4]/30 flex items-center justify-center shrink-0">
+                        <Upload class="w-5 h-5 text-[#8CD5F4]" />
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-white">{{ $t('Tsoft\'a Gönder') }}</h3>
+                        <p class="text-xs text-[#94A3B8]">{{ $t('Aşağıdaki alanlar Tsoft\'a gönderilecek.') }}</p>
+                    </div>
+                </div>
+                <div
+                    v-if="tsoftPreview.would_write === false"
+                    class="flex items-center gap-2 p-3 rounded-xl bg-[#E6A6F3]/10 border border-[#E6A6F3]/30 text-[#E6A6F3] text-xs font-semibold"
+                >
+                    <AlertTriangle class="w-4 h-4 shrink-0" />
+                    <span>{{ $t('Önizleme modu — canlı yazma kapalı') }}</span>
+                </div>
+                <dl class="rounded-xl bg-[#131722] border border-white/10 divide-y divide-white/[0.06] px-4">
+                    <div v-for="row in tsoftPreviewRows" :key="row.label" class="flex items-start justify-between gap-4 py-2">
+                        <dt class="text-xs text-[#94A3B8] shrink-0">{{ row.label }}</dt>
+                        <dd class="text-xs text-white text-right break-all">{{ row.value }}</dd>
+                    </div>
+                </dl>
+                <div class="flex items-center justify-end gap-3 pt-2">
+                    <PillButton type="button" variant="ghost" size="md" :disabled="tsoftSending" @click="closeTsoftPreview">{{ $t('Vazgeç') }}</PillButton>
+                    <PillButton type="button" variant="primary" size="md" :loading="tsoftSending" @click="confirmTsoftPush">{{ $t('Tsoft\'a Gönder') }}</PillButton>
+                </div>
+            </div>
+        </div>
+
         <!-- SİLME ONAY MODALI -->
         <div v-if="deletingProduct" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
             <div class="bg-[#212738] border border-white/15 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-5">
@@ -592,7 +627,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import Card from '../components/ui/Card.vue';
 import PillButton from '../components/ui/PillButton.vue';
@@ -604,7 +639,7 @@ import { formatNumber, formatMoney } from '../utils/format';
 import { companySettings, loadCompanySettings } from '../api/settings';
 import {
     Package, Tags, Ruler, Plus, Search, Pencil, Trash2,
-    Check, AlertCircle, AlertTriangle, X,
+    Check, AlertCircle, AlertTriangle, X, Upload,
 } from 'lucide-vue-next';
 
 const palette = ['#BC5FCF', '#459BBE', '#DC6F31', '#C55050', '#3D55B6', '#4E956A'];
@@ -1079,6 +1114,68 @@ async function submitProduct() {
         }
     } finally {
         productSaving.value = false;
+    }
+}
+
+// --- Tsoft'a gönderim (önizleme + onay) ---
+const tsoftPreview = ref(null);
+const tsoftProductId = ref(null);
+const tsoftSending = ref(false);
+
+const tsoftPreviewRows = computed(() => {
+    const p = tsoftPreview.value?.payload || {};
+    const show = (v) => (v === null || v === undefined || v === '' ? '-' : v);
+    return [
+        { label: t('Ürün Kodu'), value: show(p.ProductCode) },
+        { label: t('Ad'), value: show(p.ProductName) },
+        { label: t('Kategori'), value: show(p.CategoryName) },
+        { label: t('Yaprak kategori mi'), value: p.IsLeaf ? t('Evet') : t('Hayır') },
+        { label: t('Birim'), value: show(p.StockUnit) },
+        { label: t('Görsel'), value: show(p.ImageUrl) },
+        { label: t('Satış fiyatı'), value: show(p.SellingPrice) },
+        { label: t('Alış fiyatı'), value: show(p.BuyingPrice) },
+        { label: t('Para birimi'), value: show(p.Currency) },
+        { label: t('KDV'), value: show(p.Vat) },
+        { label: t('Stok'), value: show(p.Stock) },
+    ];
+});
+
+async function openTsoftPreview(p) {
+    tsoftProductId.value = p.id;
+    tsoftPreview.value = null;
+    tsoftSending.value = false;
+    try {
+        const res = await client.post(`/products/${p.id}/tsoft-push`);
+        tsoftPreview.value = res.data || {};
+    } catch (err) {
+        triggerError(err.response?.data?.message || t('Tsoft önizlemesi yüklenemedi.'));
+    }
+}
+function closeTsoftPreview() {
+    tsoftPreview.value = null;
+    tsoftProductId.value = null;
+}
+async function confirmTsoftPush() {
+    if (!tsoftProductId.value || tsoftSending.value) return;
+    tsoftSending.value = true;
+    try {
+        const res = await client.post(`/products/${tsoftProductId.value}/tsoft-push`, { confirm: true });
+        const data = res.data || {};
+        const status = data.status
+            || (data.result?.skipped ? 'skipped' : (data.result?.ok ? 'ok' : 'failed'));
+        const messages = {
+            ok: t('Ürün Tsoft\'a gönderildi.'),
+            skipped: t('Tsoft yazımı atlandı (önizleme modu).'),
+            failed: t('Ürün Tsoft\'a gönderilemedi.'),
+        };
+        const message = messages[status] || data.message || messages.failed;
+        if (status === 'failed') triggerError(message);
+        else triggerSuccess(message);
+        closeTsoftPreview();
+    } catch (err) {
+        triggerError(err.response?.data?.message || t('Ürün Tsoft\'a gönderilemedi.'));
+    } finally {
+        tsoftSending.value = false;
     }
 }
 

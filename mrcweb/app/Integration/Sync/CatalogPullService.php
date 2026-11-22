@@ -8,6 +8,7 @@ use App\Integration\Tsoft\TsoftAdapter;
 use App\Integration\Tsoft\TsoftMapper;
 use App\Models\Product;
 use App\Models\ProductCategory;
+use App\Models\Unit;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -71,6 +72,15 @@ final class CatalogPullService
             $categoryMaps = ['by_name' => [], 'by_code' => []];
         }
 
+        // 1c) Birimler: ham urun satirlarindaki StockUnit degerlerinden yerel
+        // birimler upsert edilir (Tsoft yazma ucu cagrilmaz).
+        $unitMap = [];
+        try {
+            $unitMap = $this->syncUnits($companyId, $rawProducts);
+        } catch (Throwable) {
+            $summary['errors'][] = 'units: okunamadi.';
+        }
+
         // 2) Urunler: MrcResyncService::importProducts() ile bire bir ayni upsert.
         $currency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
         foreach ($rawProducts as $index => $raw) {
@@ -85,7 +95,7 @@ final class CatalogPullService
 
                 Product::updateOrCreate(
                     ['company_id' => $companyId, 'sku' => $canonical->sku],
-                    $this->productAttributes($companyId, $canonical, $raw, $categoryMaps, $currency),
+                    $this->productAttributes($companyId, $canonical, $raw, $categoryMaps, $currency, $unitMap),
                 );
 
                 $summary['products']++;
@@ -259,6 +269,9 @@ final class CatalogPullService
      * Tsoft kategori satırlarından yerel kategorileri upsert eder ve
      * "normalize edilmiş ad/kod => yerel id" eşleme haritalarını döndürür.
      *
+     * Kategori yapısı da aynalanır: CategoryCode → external_code, HasChild →
+     * is_leaf ve ParentCode → parent_id (tüm satırlar yazıldıktan sonra çözülür).
+     *
      * @param  array<int,array<string,mixed>>  $rows  ham /rest1/category/getCategories satırları
      * @return array{by_name:array<string,int>,by_code:array<string,int>}
      */
@@ -266,6 +279,7 @@ final class CatalogPullService
     {
         $maps = ['by_name' => [], 'by_code' => []];
         $palette = ['#B9FF66', '#459BBE', '#DC6F31', '#BC5FCF', '#4E956A'];
+        $parents = [];
 
         foreach ($rows as $row) {
             if (! is_array($row)) {
@@ -277,11 +291,19 @@ final class CatalogPullService
                 continue;
             }
 
+            $code = trim((string) ($row['CategoryCode'] ?? $row['categoryCode'] ?? ''));
+            $hasChild = $row['HasChild'] ?? $row['HashChild'] ?? $row['hasChild'] ?? false;
+            $isLeaf = ! $this->isTruthy($hasChild);
+
             try {
                 $category = ProductCategory::updateOrCreate(
                     ['company_id' => $companyId, 'name' => mb_substr($name, 0, 120)],
-                    // Deterministik renk: aynı kategori her çekimde aynı rengi alır.
-                    ['color' => $palette[abs(crc32($name)) % count($palette)]],
+                    [
+                        // Deterministik renk: aynı kategori her çekimde aynı rengi alır.
+                        'color' => $palette[abs(crc32($name)) % count($palette)],
+                        'external_code' => $code !== '' ? mb_substr($code, 0, 32) : null,
+                        'is_leaf' => $isLeaf,
+                    ],
                 );
 
                 $key = mb_strtolower(trim((string) $category->name), 'UTF-8');
@@ -289,9 +311,11 @@ final class CatalogPullService
                     $maps['by_name'][$key] = (int) $category->id;
                 }
 
-                $code = trim((string) ($row['CategoryCode'] ?? $row['categoryCode'] ?? ''));
                 if ($code !== '') {
-                    $maps['by_code'][mb_strtolower($code, 'UTF-8')] = (int) $category->id;
+                    $codeKey = mb_strtolower($code, 'UTF-8');
+                    $maps['by_code'][$codeKey] = (int) $category->id;
+                    // ParentCode kod ile geldiği için yerel id çözümü ikinci turda yapılır.
+                    $parents[(int) $category->id] = trim((string) ($row['ParentCode'] ?? $row['parentCode'] ?? ''));
                 }
             } catch (Throwable) {
                 // Bozuk satır tüm katalog çekimini bozmasın; genel hata yeterli.
@@ -299,7 +323,100 @@ final class CatalogPullService
             }
         }
 
+        // Tüm kategoriler yazıldıktan sonra ParentCode → yerel parent_id.
+        foreach ($parents as $localId => $parentCode) {
+            if ($parentCode === '' || $parentCode === '0') {
+                $parentId = null;
+            } else {
+                $parentKey = mb_strtolower($parentCode, 'UTF-8');
+                $parentId = $maps['by_code'][$parentKey] ?? null;
+            }
+
+            ProductCategory::query()
+                ->where('company_id', $companyId)
+                ->where('id', $localId)
+                ->update(['parent_id' => $parentId]);
+        }
+
         return $maps;
+    }
+
+    /**
+     * Ham ürün satırlarındaki StockUnit değerlerinden yerel birimleri upsert eder.
+     * `product/getStockUnitList` bu WS kullanıcısına kapalı olduğundan kaynak
+     * yalnızca ürün satırlarıdır. Dönen dizi: "küçük harf birim adı => yerel id".
+     *
+     * @param  array<int,array<string,mixed>>  $rawProducts
+     * @return array<string,int>
+     */
+    public function syncUnits(int $companyId, array $rawProducts): array
+    {
+        $units = [];
+
+        foreach ($rawProducts as $raw) {
+            if (! is_array($raw)) {
+                continue;
+            }
+
+            $name = trim((string) $this->pick($raw, [
+                'StockUnit', 'stockUnit', 'UnitName', 'attributes.stockUnit',
+            ], ''));
+            if ($name === '') {
+                continue;
+            }
+
+            $key = mb_strtolower($name, 'UTF-8');
+            $external = trim((string) $this->pick($raw, [
+                'StockUnitId', 'stockUnitId', 'attributes.stockUnitId',
+            ], ''));
+
+            if (! isset($units[$key])) {
+                $units[$key] = [
+                    'name' => mb_substr($name, 0, 60),
+                    'external_code' => $external !== '' ? mb_substr($external, 0, 32) : null,
+                ];
+            } elseif ($external !== '' && $units[$key]['external_code'] === null) {
+                $units[$key]['external_code'] = mb_substr($external, 0, 32);
+            }
+        }
+
+        $map = [];
+        $first = true;
+
+        foreach ($units as $key => $attributes) {
+            $name = $attributes['name'];
+            // units.code kolonu varchar(16): üretim şemasına güvenli uzunluk.
+            $code = mb_substr(strtoupper((string) preg_replace('/[^A-Z0-9]/i', '', $name)), 0, 16);
+            if ($code === '') {
+                $code = 'UNIT'.mb_substr(md5($key), 0, 8);
+            }
+
+            // Aynı kodlu başka bir birim varsa (ör. elle açılmış "adet") çakışmaz.
+            $base = $code;
+            $suffix = 2;
+            while (Unit::query()
+                ->where('company_id', $companyId)
+                ->where('code', $code)
+                ->where('name', '!=', $name)
+                ->exists()) {
+                $code = mb_substr($base, 0, 13).'-'.$suffix++;
+            }
+
+            $unit = Unit::updateOrCreate(
+                ['company_id' => $companyId, 'code' => $code],
+                [
+                    'name' => $name,
+                    'external_code' => $attributes['external_code'],
+                    // Yalnızca ilk birim varsayılan; diğerleri mevcut default'u bozmaz.
+                    'is_default' => $first,
+                ],
+            );
+
+            $first = false;
+            $map[$key] = (int) $unit->id;
+        }
+
+        return $map;
     }
 
     /**
@@ -307,10 +424,12 @@ final class CatalogPullService
      * MrcResyncService aynı veri kalitesi kurallarını kullansın diye ortak nokta.
      *
      * Orijinal İngilizce ad name_en'de saklanır; name alanı best-effort çevrilir.
-     * Barkod boşsa üretilir, mevcut dolu barkod asla ezilmez.
+     * Barkod boşsa üretilir, mevcut dolu barkod asla ezilmez. Aynı kural görseller
+     * ve birim için de geçerlidir: Tsoft veri vermezse elle girilmiş değer korunur.
      *
      * @param  array{by_name:array<string,int>,by_code:array<string,int>}  $categoryMaps
      * @param  array<string,mixed>  $raw
+     * @param  array<string,int>  $unitMap  küçük harf birim adı => yerel birim id
      * @return array<string,mixed>
      */
     public function productAttributes(
@@ -319,10 +438,17 @@ final class CatalogPullService
         array $raw,
         array $categoryMaps,
         string $defaultCurrency,
+        array $unitMap = [],
     ): array {
         $english = (string) $canonical->name;
         $translated = (new ProductNameTranslator)->toTurkish($english);
         $localizedName = trim($translated) !== '' ? $translated : $english;
+
+        // Barkod / görsel / birim için mevcut değerler tek sorguda okunur.
+        $existing = Product::query()
+            ->where('company_id', $companyId)
+            ->where('sku', $canonical->sku)
+            ->first(['barcode', 'image_url', 'images', 'unit_id']);
 
         $incomingBarcode = trim((string) $this->pick($raw, [
             'Barcode', 'barcode', 'Ean', 'attributes.barcode',
@@ -336,12 +462,9 @@ final class CatalogPullService
         } else {
             // Tsoft barkodu yoksa yerel, SKU'ya göre deterministik barkod üret.
             // Ürünün zaten dolu bir barkodu varsa onu koru (idempotent veri kalitesi).
-            $existing = Product::query()
-                ->where('company_id', $companyId)
-                ->where('sku', $canonical->sku)
-                ->value('barcode');
-            $barcode = $existing !== null && trim((string) $existing) !== ''
-                ? mb_substr((string) $existing, 0, 64)
+            $existingBarcode = $existing?->barcode;
+            $barcode = $existingBarcode !== null && trim((string) $existingBarcode) !== ''
+                ? mb_substr((string) $existingBarcode, 0, 64)
                 : 'MRC'.strtoupper(substr(md5($canonical->sku), 0, 10));
         }
 
@@ -369,16 +492,149 @@ final class CatalogPullService
             'currency', 'currency_code', 'currencyCode', 'Currency', 'attributes.currency',
         ], $defaultCurrency);
 
+        [$imageUrl, $images] = $this->resolveImages($raw, $existing);
+        $unitId = $this->resolveUnitId($raw, $unitMap, $existing);
+
         return [
             'name' => mb_substr($localizedName !== '' ? $localizedName : $canonical->sku, 0, 190),
             'name_en' => mb_substr($english, 0, 190),
             'barcode' => $barcode,
             'category_id' => $categoryId,
+            'unit_id' => $unitId,
+            'image_url' => $imageUrl,
+            'images' => $images,
             'currency_code' => strtoupper(mb_substr((string) $rowCurrency, 0, 3)),
             'sale_price' => $this->decimal($sale),
             'tax_rate' => $this->decimal($tax, 2),
             'track_inventory' => true,
         ];
+    }
+
+    /**
+     * Tsoft görsel alanlarından mutlak kapak URL'si ve çoklu görsel dizisi üretir.
+     * Tsoft hiç görsel döndürmezse mevcut (elle girilmiş) değerler korunur.
+     *
+     * @return array{0:?string,1:?array<int,string>}
+     */
+    private function resolveImages(array $raw, ?Product $existing): array
+    {
+        $urls = [];
+
+        $list = $this->pick($raw, ['ImageUrls', 'imageUrls', 'Images', 'images'], []);
+        if (is_array($list)) {
+            foreach ($list as $image) {
+                if (! is_array($image)) {
+                    $candidate = $this->absoluteImageUrl($image);
+
+                    if ($candidate !== '' && ! in_array($candidate, $urls, true)) {
+                        $urls[] = $candidate;
+                    }
+
+                    continue;
+                }
+
+                // Mutlak ImageUrl > Big > Medium > Small sırasıyla seçilir.
+                $candidate = $this->absoluteImageUrl($this->pick($image, [
+                    'ImageUrl', 'imageUrl', 'Big', 'big', 'Medium', 'medium', 'Small', 'small',
+                ], ''));
+
+                if ($candidate !== '' && ! in_array($candidate, $urls, true)) {
+                    $urls[] = $candidate;
+                }
+            }
+        }
+
+        $first = $urls[0] ?? '';
+        if ($first === '') {
+            // Yalnızca göreli ImageUrl varsa statik CDN ön eki eklenir.
+            $first = $this->absoluteImageUrl($this->pick($raw, [
+                'ImageUrl', 'imageUrl', 'MainImage', 'mainImage',
+            ], ''));
+            if ($first !== '' && ! in_array($first, $urls, true)) {
+                $urls[] = $first;
+            }
+        }
+
+        $urls = array_values(array_slice($urls, 0, 10));
+
+        $existingUrl = trim((string) ($existing?->image_url ?? ''));
+        $existingImages = $this->decodeImages($existing?->images);
+
+        return [
+            $first !== ''
+                ? mb_substr($first, 0, 500)
+                : ($existingUrl !== '' ? mb_substr($existingUrl, 0, 500) : null),
+            $urls !== [] ? $urls : ($existingImages !== [] ? $existingImages : null),
+        ];
+    }
+
+    /** Göreli Tsoft yollarını (ör. "D27/15851.jpg") mutlak CDN URL'sine çevirir. */
+    private function absoluteImageUrl(mixed $value): string
+    {
+        if (! is_scalar($value)) {
+            return '';
+        }
+
+        $url = trim((string) $value);
+        if ($url === '') {
+            return '';
+        }
+        if (preg_match('#^https?://#i', $url) === 1) {
+            return $url;
+        }
+        if (str_starts_with($url, '//')) {
+            return 'https:'.$url;
+        }
+
+        return 'https://autokeystore.tsoftstatic.com/'.ltrim($url, '/');
+    }
+
+    /** @return array<int,string> */
+    private function decodeImages(mixed $value): array
+    {
+        $candidates = $value;
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            $candidates = is_array($decoded) ? $decoded : [];
+        }
+        if (! is_array($candidates)) {
+            return [];
+        }
+
+        $images = [];
+        foreach ($candidates as $candidate) {
+            if (is_scalar($candidate) && trim((string) $candidate) !== '') {
+                $images[] = (string) $candidate;
+            }
+        }
+
+        return $images;
+    }
+
+    private function resolveUnitId(array $raw, array $unitMap, ?Product $existing): ?int
+    {
+        $name = trim((string) $this->pick($raw, [
+            'StockUnit', 'stockUnit', 'UnitName', 'attributes.stockUnit',
+        ], ''));
+        $key = mb_strtolower($name, 'UTF-8');
+
+        if ($name !== '' && isset($unitMap[$key])) {
+            return (int) $unitMap[$key];
+        }
+
+        // Tsoft birim adı yoksa elle atanmış birimi koru.
+        $existingUnitId = $existing?->unit_id;
+
+        return $existingUnitId === null ? null : (int) $existingUnitId;
+    }
+
+    private function isTruthy(mixed $value): bool
+    {
+        if (is_string($value)) {
+            return in_array(mb_strtolower(trim($value), 'UTF-8'), ['1', 'true', 'yes', 'y', 'evet'], true);
+        }
+
+        return (bool) $value;
     }
 
     /** @param array<string,mixed> $data @param array<int,string> $keys */

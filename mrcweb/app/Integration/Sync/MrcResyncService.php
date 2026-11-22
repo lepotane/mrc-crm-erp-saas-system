@@ -635,6 +635,13 @@ final class MrcResyncService
         $currency = strtoupper((string) config('integrations.channels.tsoft.currency', 'TRY'));
         $quality = new CatalogPullService;
         $categoryMaps = $quality->syncCategories($companyId, $categoryRows);
+        // CatalogPullService ile aynı birim eşlemesi: tam resync'de de
+        // görseller/birimler aynı ortak attribute helper'ından gelir.
+        try {
+            $unitMap = $quality->syncUnits($companyId, $rawProducts);
+        } catch (Throwable) {
+            $unitMap = [];
+        }
         $imported = 0;
 
         foreach (array_values($rawProducts) as $index => $raw) {
@@ -649,7 +656,7 @@ final class MrcResyncService
 
                 Product::updateOrCreate(
                     ['company_id' => $companyId, 'sku' => $canonical->sku],
-                    $quality->productAttributes($companyId, $canonical, $raw, $categoryMaps, $currency),
+                    $quality->productAttributes($companyId, $canonical, $raw, $categoryMaps, $currency, $unitMap),
                 );
 
                 $imported++;

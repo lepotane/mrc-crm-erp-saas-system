@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Unit extends Model
 {
-    protected $fillable = ['company_id', 'name', 'name_en', 'code', 'is_default'];
+    protected $fillable = ['company_id', 'name', 'name_en', 'code', 'is_default', 'external_code'];
 
     /**
      * Çıktı dilindeki ad : İngilizce istendiyse ve girilmişse

@@ -144,6 +144,8 @@ final class TsoftWriteDriver
             $safe = [];
             foreach ([
                 'Stock', 'SellingPrice', 'BuyingPrice', 'ProductName', 'DefaultCategoryCode', 'IsActive',
+                // Yalnızca okuma: yapı/görsel eşlemesi için teknik alanlar.
+                'DefaultCategoryName', 'StockUnit', 'ImageUrl', 'Images',
             ] as $field) {
                 $safe[$field] = $row[$field] ?? null;
             }

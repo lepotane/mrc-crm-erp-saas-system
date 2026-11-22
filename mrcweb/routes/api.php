@@ -1,47 +1,47 @@
 <?php
 
-use App\Http\Controllers\Api\V1\IntegrationDiffController;
-use App\Http\Controllers\Api\V1\AccountMappingController;
-use App\Http\Controllers\Api\V1\IntegrationPriceController;
-use App\Http\Controllers\Api\V1\IntegrationHealthController;
+use App\Http\Controllers\Api\PaymentCallbackController;
 use App\Http\Controllers\Api\V1\AccountantController;
-use App\Http\Controllers\Api\V1\IntegrationWebhookController;
-use App\Http\Controllers\Api\V1\CategoryController;
-use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\AccountMappingController;
 use App\Http\Controllers\Api\V1\AuditController;
+use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\BankAccountController;
+use App\Http\Controllers\Api\V1\BarcodeController;
+use App\Http\Controllers\Api\V1\BridgeController;
+use App\Http\Controllers\Api\V1\CategoryController;
+use App\Http\Controllers\Api\V1\CompanyController;
 use App\Http\Controllers\Api\V1\CurrencyController;
 use App\Http\Controllers\Api\V1\DashboardController;
-use App\Http\Controllers\Api\V1\SearchController;
-use App\Http\Controllers\Api\V1\CompanyController;
 use App\Http\Controllers\Api\V1\DocumentController;
 use App\Http\Controllers\Api\V1\DocumentPdfController;
+use App\Http\Controllers\Api\V1\DocumentPriceClassController;
+use App\Http\Controllers\Api\V1\IntegrationDiffController;
+use App\Http\Controllers\Api\V1\IntegrationHealthController;
+use App\Http\Controllers\Api\V1\IntegrationPriceController;
+use App\Http\Controllers\Api\V1\IntegrationWebhookController;
 use App\Http\Controllers\Api\V1\InvitationController;
 use App\Http\Controllers\Api\V1\JoinRequestController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\ModuleController;
 use App\Http\Controllers\Api\V1\NotificationController;
-use App\Http\Controllers\Api\V1\SuperAdminController;
 use App\Http\Controllers\Api\V1\PartyController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\PaymentLinkController;
 use App\Http\Controllers\Api\V1\PaymentSettingController;
-use App\Http\Controllers\Api\V1\TwoFactorController;
-use App\Http\Controllers\Api\PaymentCallbackController;
-use App\Http\Controllers\Api\V1\ProductController;
-use App\Http\Controllers\Api\V1\ProductPriceController;
-use App\Http\Controllers\Api\V1\DocumentPriceClassController;
 use App\Http\Controllers\Api\V1\PrintJobController;
 use App\Http\Controllers\Api\V1\PrintTemplateController;
-use App\Http\Controllers\Api\V1\BarcodeController;
-use App\Http\Controllers\Api\V1\BridgeController;
+use App\Http\Controllers\Api\V1\ProductController;
+use App\Http\Controllers\Api\V1\ProductPriceController;
 use App\Http\Controllers\Api\V1\QuickSaleController;
 use App\Http\Controllers\Api\V1\ReportController;
+use App\Http\Controllers\Api\V1\SearchController;
 use App\Http\Controllers\Api\V1\SettingsController;
 use App\Http\Controllers\Api\V1\StockCountController;
 use App\Http\Controllers\Api\V1\StockMovementController;
 use App\Http\Controllers\Api\V1\StockTransferController;
+use App\Http\Controllers\Api\V1\SuperAdminController;
 use App\Http\Controllers\Api\V1\TokenController;
+use App\Http\Controllers\Api\V1\TwoFactorController;
 use App\Http\Controllers\Api\V1\UnitController;
 use App\Http\Controllers\Api\V1\WarehouseController;
 use Illuminate\Support\Facades\Route;
@@ -144,7 +144,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('notifications/clear-all', [NotificationController::class, 'clearAll']);
         Route::delete('notifications/{notification}', [NotificationController::class, 'destroy']);
 
-        // Plan ve limit kullanimi 
+        // Plan ve limit kullanimi
         Route::get('company/plan', [CompanyController::class, 'plan']);
 
         // Firma bazlı ayarlar
@@ -172,6 +172,8 @@ Route::prefix('v1')->group(function () {
         Route::get('products/{product}', [ProductController::class, 'show']);
         Route::patch('products/{product}', [ProductController::class, 'update']);
         Route::delete('products/{product}', [ProductController::class, 'destroy']);
+        // Tsoft yazımı: varsayılan önizleme, confirm=true ile opt-in yazım
+        Route::post('products/{product}/tsoft-push', [ProductController::class, 'tsoftPush']);
 
         // Fiyat sınıfları (para birimi bazlı fiyat listesi)
         Route::put('products/{product}/prices', [ProductPriceController::class, 'update']);
@@ -369,4 +371,3 @@ Route::post('paytr/callback', [PaymentCallbackController::class, 'paytr'])
 
 Route::match(['get', 'post'], 'iyzico/callback', [PaymentCallbackController::class, 'iyzico'])
     ->middleware('throttle:60,1');
-

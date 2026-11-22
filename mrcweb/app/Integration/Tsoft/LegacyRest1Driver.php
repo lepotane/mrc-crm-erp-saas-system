@@ -395,6 +395,8 @@ final class LegacyRest1Driver
                 // Konsolda doğrulanan parametreler: limit (max 500) ve start (offset).
                 'limit' => $pageSize,
                 'start' => $start,
+                // Canlı doğrulandı: görseller yalnızca bu anahtarla döner.
+                'FetchImageUrls' => 1,
             ]);
 
             $this->assertSuccessful($response, 'Tüm ürünler alınamadı');

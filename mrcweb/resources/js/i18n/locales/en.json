@@ -1444,5 +1444,20 @@
   "İşlem No": "Transaction ID",
   "Kargo firması": "Cargo company",
   "Takip No": "Tracking No",
-  "Fatura No": "Invoice No"
+  "Fatura No": "Invoice No",
+  "Tsoft'a Gönder": "Send to Tsoft",
+  "Aşağıdaki alanlar Tsoft'a gönderilecek.": "The fields below will be sent to Tsoft.",
+  "Önizleme modu — canlı yazma kapalı": "Preview mode - live writing is disabled",
+  "Ürün Kodu": "Product Code",
+  "Yaprak kategori mi": "Leaf category?",
+  "Görsel": "Image",
+  "Satış fiyatı": "Sale price",
+  "Alış fiyatı": "Purchase price",
+  "Para birimi": "Currency",
+  "Evet": "Yes",
+  "Hayır": "No",
+  "Tsoft önizlemesi yüklenemedi.": "Tsoft preview could not be loaded.",
+  "Tsoft yazımı atlandı (önizleme modu).": "Tsoft write skipped (preview mode).",
+  "Ürün Tsoft'a gönderildi.": "Product sent to Tsoft.",
+  "Ürün Tsoft'a gönderilemedi.": "Product could not be sent to Tsoft."
 }

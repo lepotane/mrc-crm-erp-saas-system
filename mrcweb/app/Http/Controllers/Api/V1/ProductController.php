@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Concerns\PresentsPaginator;
 use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
+use App\Integration\Enums\SyncDirection;
+use App\Integration\Orders\IntegrationAudit;
+use App\Integration\Sync\TsoftWritebackService;
 use App\Models\Currency;
 use App\Models\Product;
 use App\Models\StockMovement;
@@ -190,6 +193,151 @@ class ProductController extends Controller
         ReportCache::bump($product->company_id);
 
         return response()->json(['message' => __('Ürün silindi.')]);
+    }
+
+    /**
+     * Ürünü Tsoft'a göndermek için önizleme / onaylı yazım (opt-in).
+     *
+     * Varsayılan çağrı YAZMAZ; yalnızca gönderilecek alanları döner.
+     * `confirm=true` ile yazma servisi çağrılır; dry_run veya katalog yazım
+     * kapatıksa sürücü kendi guard'ı ile hiç HTTP isteği yapmaz.
+     *
+     * @response array{preview: bool, payload: array<string,mixed>, would_write: bool, status?: string, result?: array<string,mixed>, message?: string}
+     */
+    #[BodyParameter(
+        name: 'confirm',
+        description: 'true ise Tsoft yazımını gerçekleştirir (varsayılan: yalnızca önizleme)',
+        type: 'bool',
+    )]
+    public function tsoftPush(Request $request, int $product)
+    {
+        $companyId = $this->tenantId($request);
+        $startedAt = microtime(true);
+
+        $productModel = Product::query()
+            ->where('company_id', $companyId)
+            ->with(['category', 'unit'])
+            ->find($product);
+
+        if (! $productModel instanceof Product) {
+            abort(404, __('Ürün bulunamadı.'));
+        }
+
+        $category = $productModel->category;
+        $unit = $productModel->unit;
+        $isLeaf = (bool) ($category?->getAttribute('is_leaf') ?? false);
+
+        // Ham payload yalnızca bu yanıtta döner; loglara yazılmaz.
+        $preview = [
+            'ProductCode' => trim((string) $productModel->sku),
+            'ProductName' => filled($productModel->name_en)
+                ? (string) $productModel->name_en
+                : (string) $productModel->name,
+            'DefaultCategoryCode' => trim((string) ($category?->getAttribute('external_code') ?? '')),
+            'CategoryName' => (string) ($category?->name ?? ''),
+            'IsLeaf' => $isLeaf,
+            'StockUnit' => trim((string) ($unit?->code ?: ($unit?->name ?? ''))),
+            'ImageUrl' => (string) ($productModel->getAttribute('image_url') ?? ''),
+            'SellingPrice' => (string) $productModel->sale_price,
+            'BuyingPrice' => (string) $productModel->cost_price,
+            'Currency' => trim((string) $productModel->currency_code),
+            'Vat' => (string) $productModel->tax_rate,
+            'Stock' => StockMovement::stockFor($companyId, (int) $productModel->id),
+            'IsActive' => true,
+        ];
+
+        // Hiçbir HTTP çağrısından önce doğrula; kişisel veri veya payload
+        // mesaja karışmaz (yalnızca eksik alan adları).
+        $missing = [];
+        if ($preview['ProductCode'] === '') {
+            $missing[] = 'ürün kodu (SKU)';
+        }
+        if ($category === null) {
+            $missing[] = 'kategori';
+        } else {
+            if (! $isLeaf) {
+                $missing[] = 'yaprak kategori (is_leaf)';
+            }
+            if ($preview['DefaultCategoryCode'] === '') {
+                $missing[] = 'kategori Tsoft kodu (external_code)';
+            }
+        }
+        if ((float) $productModel->sale_price <= 0) {
+            $missing[] = 'satış fiyatı';
+        }
+        if ($preview['Currency'] === '') {
+            $missing[] = 'para birimi';
+        }
+
+        if ($missing !== []) {
+            IntegrationAudit::log(
+                $companyId,
+                SyncDirection::Out,
+                'product_tsoft_push',
+                null,
+                'invalid',
+                ['preview' => true, 'would_write' => false, 'missing' => count($missing)],
+                (int) ((microtime(true) - $startedAt) * 1000),
+            );
+
+            return response()->json([
+                'message' => __('Tsoft gönderimi için eksik alanlar: :fields', [
+                    'fields' => implode(', ', $missing),
+                ]),
+            ], 422);
+        }
+
+        $writesEnabled = config('integrations.dry_run') !== true
+            && config('integrations.channels.tsoft.catalog_write_enabled') === true;
+        $confirm = $request->boolean('confirm');
+
+        if (! $confirm) {
+            IntegrationAudit::log(
+                $companyId,
+                SyncDirection::Out,
+                'product_tsoft_push',
+                null,
+                'preview',
+                ['preview' => true, 'would_write' => $writesEnabled],
+                (int) ((microtime(true) - $startedAt) * 1000),
+            );
+
+            return response()->json([
+                'preview' => true,
+                'payload' => $preview,
+                'would_write' => $writesEnabled,
+            ]);
+        }
+
+        // Sürücü kendi guard'ına sahiptir; kapalıyken yine çağrılır ve "skipped"
+        // döner. would_write yalnızca istemciyi doğru bilgilendirmek içindir.
+        $result = app(TsoftWritebackService::class)->pushProduct($companyId, $preview);
+
+        $status = ! empty($result['skipped']) ? 'skipped' : ((! empty($result['ok'])) ? 'ok' : 'failed');
+        $messages = [
+            'skipped' => __('Tsoft yazımı atlandı (önizleme modu).'),
+            'ok' => __('Ürün Tsoft\'a gönderildi.'),
+            'failed' => __('Ürün Tsoft\'a gönderilemedi.'),
+        ];
+
+        IntegrationAudit::log(
+            $companyId,
+            SyncDirection::Out,
+            'product_tsoft_push',
+            null,
+            $status,
+            ['preview' => false, 'would_write' => $writesEnabled, 'skipped' => $status === 'skipped'],
+            (int) ((microtime(true) - $startedAt) * 1000),
+        );
+
+        return response()->json([
+            'preview' => false,
+            'payload' => $preview,
+            'would_write' => $writesEnabled,
+            'status' => $status,
+            'result' => $result,
+            'message' => $messages[$status],
+        ]);
     }
 
     protected function authorizeProduct(Request $request, Product $product): void
