@@ -47,7 +47,7 @@ final class MrcResyncService
     ];
 
     /** Tek seferde alınacak azami sipariş sayısı. */
-    private const MAX_ORDERS = 5000;
+    private const MAX_ORDERS = 10000;
 
     public function __construct(
         private readonly mixed $adapterFactory = null,
@@ -153,6 +153,12 @@ final class MrcResyncService
                 $report['imported']['orders'] = $this->importOrders(
                     $companyId, $external['orders'], $report
                 );
+
+                // Herhangi bir aktarım hatası TÜM silme+içe aktarımı geri alır.
+                // Kısmi veri bırakmak üretimde kabul edilemez.
+                if ($report['errors'] !== []) {
+                    throw new \RuntimeException('İçe aktarma hatası; değişiklikler geri alındı.');
+                }
             });
 
             $report['executed'] = true;
@@ -362,7 +368,7 @@ final class MrcResyncService
         }
 
         try {
-            $rows = $adapter->fetchOrders(now()->subYear(), self::MAX_ORDERS);
+            $rows = $adapter->fetchOrders(null, self::MAX_ORDERS);
         } catch (Throwable) {
             $report['errors'][] = 'Tsoft siparisleri okunamadi.';
 

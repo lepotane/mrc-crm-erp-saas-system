@@ -40,35 +40,57 @@ final class LegacyRest1Driver
     /** @return array<int, CanonicalOrder> */
     public function fetchOrders(?CarbonInterface $since = null, int $limit = 100): array
     {
-        $limit = max(1, min(500, $limit));
-        $cacheKey = 'tsoft:orders:'.$this->companyId.':'.md5(($since?->toIso8601String() ?? 'all').':'.$limit);
+        $limit = max(1, min(5000, $limit));
+        $pageSize = 500;
+        $orders = [];
+        $seen = [];
 
-        // rest1 için ~3 dakikalık sorgulama aralığı (170 sn) korunur.
-        return Cache::remember($cacheKey, 170, function () use ($since, $limit): array {
-            $response = $this->post('/order/getOrders', [
+        // Sipariş gövdeleri kişisel veri içerir; DB cache'e yazılmaz (KVKK).
+        for ($start = 0; $start < $limit; $start += $pageSize) {
+            $response = $this->post('/order/get', [
                 'UpdateDateTimeStart' => $since?->format('Y-m-d H:i:s'),
                 'IsTransferred' => 0,
                 'Archive' => 0,
+                'limit' => min($pageSize, $limit - $start),
+                'start' => $start,
             ]);
 
             $this->assertSuccessful($response, 'Siparişler alınamadı');
 
-            $rows = $this->rows($response);
-            $orders = [];
+            $pageRows = $this->rows($response);
+            if ($pageRows === []) {
+                break;
+            }
 
-            foreach (array_slice($rows, 0, $limit) as $row) {
-                if (is_array($row)) {
-                    $orders[] = TsoftMapper::order($row);
+            $fresh = 0;
+            foreach ($pageRows as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $code = (string) ($row['OrderCode'] ?? '');
+                $key = $code !== '' ? $code : md5(serialize($row));
+                if (isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $fresh++;
+                $orders[] = TsoftMapper::order($row);
+                if (count($orders) >= $limit) {
+                    break 2;
                 }
             }
 
-            return $orders;
-        });
+            if ($fresh === 0 || count($pageRows) < $pageSize) {
+                break;
+            }
+        }
+
+        return $orders;
     }
 
     public function fetchOrder(string $externalRef): ?CanonicalOrder
     {
-        $response = $this->post('/order/getOrders', [
+        $response = $this->post('/order/get', [
             'OrderCode' => $externalRef,
             'IsTransferred' => 0,
             'Archive' => 0,
@@ -170,16 +192,15 @@ final class LegacyRest1Driver
     public function fetchAllProducts(): array
     {
         $pageSize = 500;
-        $maxProducts = 5000;
-        $maxPages = (int) ceil($maxProducts / $pageSize);
+        $maxProducts = 10000;
         $rows = [];
         $seen = [];
 
-        for ($page = 1; $page <= $maxPages; $page++) {
+        for ($start = 0; $start < $maxProducts; $start += $pageSize) {
             $response = $this->post('/product/getProducts', [
-                'page' => $page,
-                'Page' => $page,
-                'PageSize' => $pageSize,
+                // Konsolda doğrulanan parametreler: limit (max 500) ve start (offset).
+                'limit' => $pageSize,
+                'start' => $start,
             ]);
 
             $this->assertSuccessful($response, 'Tüm ürünler alınamadı');
@@ -380,11 +401,11 @@ final class LegacyRest1Driver
             return $cached;
         }
 
+        // Klasik rest1'de kullanıcı adı URL yolunda, parola `pass` alanında gönderilir.
         $response = $this->http()
             ->asForm()
-            ->post($this->baseUrl().'/auth/login', [
-                'username' => $this->username,
-                'password' => $this->password,
+            ->post($this->baseUrl().'/auth/login/'.rawurlencode($this->username), [
+                'pass' => $this->password,
             ]);
 
         if (! $response->successful()) {
@@ -392,20 +413,20 @@ final class LegacyRest1Driver
             throw new \RuntimeException('Tsoft rest1 girişi başarısız (HTTP '.$response->status().').');
         }
 
-        $token = $response->json('token') ?? $response->json('Token');
-        if (! is_string($token) || $token === '') {
-            throw new \RuntimeException('Tsoft rest1 giriş yanıtında token bulunamadı.');
+        $bearer = $response->json('data.0.token') ?? $response->json('token');
+        if (! is_string($bearer) || $bearer === '') {
+            throw new \RuntimeException('Tsoft rest1 giriş yanıtında erişim anahtarı bulunamadı.');
         }
 
-        $expiration = $response->json('expirationTime') ?? $response->json('expiration_time');
+        $expiration = $response->json('data.0.expirationTime') ?? $response->json('expirationTime') ?? $response->json('expiration_time');
         $expiresAt = is_numeric($expiration)
             ? (int) $expiration
             : (is_string($expiration) ? (strtotime($expiration) ?: 0) : 0);
         $ttl = max(60, ($expiresAt > 0 ? $expiresAt : time() + 3600) - time() - 300);
 
-        Cache::put($key, $token, $ttl);
+        Cache::put($key, $bearer, $ttl);
 
-        return $token;
+        return $bearer;
     }
 
     /** Token her çağrıda POST parametresi olarak eklenir. */

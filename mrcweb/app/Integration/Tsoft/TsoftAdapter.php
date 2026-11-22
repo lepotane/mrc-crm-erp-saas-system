@@ -254,6 +254,20 @@ final class TsoftAdapter implements ChannelAdapterInterface, OrderSourceInterfac
         $candidates = array_merge([$key], $aliases[$key] ?? []);
 
         foreach ($candidates as $candidate) {
+            // Yerel CredentialVault imzası: get(companyId, channel, key)
+            if ($this->vault instanceof CredentialVault) {
+                try {
+                    $value = $this->vault->get($this->companyId, Channel::Tsoft, $candidate);
+                } catch (Throwable) {
+                    $value = null;
+                }
+                if (is_scalar($value) && (string) $value !== '') {
+                    return (string) $value;
+                }
+
+                continue;
+            }
+
             foreach (['get', 'field', 'value', 'secret', 'decrypt'] as $method) {
                 if (! is_callable([$this->vault, $method])) {
                     continue;
