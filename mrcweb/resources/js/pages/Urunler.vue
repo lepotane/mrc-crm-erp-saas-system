@@ -102,6 +102,7 @@
                 <table class="w-full text-sm min-w-[900px]">
                     <thead>
                         <tr class="text-left text-[11px] uppercase tracking-wider text-[#64748B] border-b border-white/[0.08]">
+                            <th class="py-3 pr-3 font-semibold w-14">{{ $t('Görsel') }}</th>
                             <th class="py-3 pr-3 font-semibold">{{ $t('Ad') }}</th>
                             <th class="py-3 pr-3 font-semibold">{{ $t('Kategori') }}</th>
                             <th class="py-3 pr-3 font-semibold">SKU</th>
@@ -116,6 +117,30 @@
                     </thead>
                     <tbody class="divide-y divide-white/[0.06]">
                         <tr v-for="p in products" :key="p.id" class="hover:bg-white/[0.03] transition-colors">
+                            <td class="py-3 pr-3">
+                                <button
+                                    v-if="p.image_url && !failedImages[p.image_url]"
+                                    type="button"
+                                    class="w-10 h-10 rounded-lg overflow-hidden border border-white/10 bg-[#131722] cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-[#B9FF66]"
+                                    :title="$t('Görseli büyüt')"
+                                    @click.stop="openLightbox(p.image_url)"
+                                >
+                                    <img
+                                        :src="p.image_url"
+                                        :alt="p.name"
+                                        class="w-full h-full object-cover"
+                                        loading="lazy"
+                                        @error="failedImages[p.image_url] = true"
+                                    />
+                                </button>
+                                <span
+                                    v-else
+                                    class="w-10 h-10 rounded-lg bg-[#131722] border border-white/10 flex items-center justify-center text-[#64748B] shrink-0"
+                                    :title="$t('Görsel yok')"
+                                >
+                                    <ImageIcon class="w-5 h-5 stroke-[1.5]" />
+                                </span>
+                            </td>
                             <td class="py-3 pr-3 font-semibold text-white">{{ p.name }}</td>
                             <td class="py-3 pr-3">
                                 <span v-if="p.category" class="inline-flex items-center gap-1.5 text-xs text-[#CBD5E1]">
@@ -292,6 +317,43 @@
                     {{ productGeneralError }}
                 </div>
                 <form @submit.prevent="submitProduct" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- TSOFT GÖRSELİ (salt okunur — yükleme yok) -->
+                    <div v-if="editingProduct" class="sm:col-span-2 rounded-2xl border border-white/[0.08] bg-[#131722]/50 p-4 space-y-2">
+                        <div class="flex items-center gap-2">
+                            <ImageIcon class="w-4 h-4 text-[#8CD5F4]" />
+                            <h4 class="text-sm font-extrabold text-white">{{ $t('Tsoft Görseli') }}</h4>
+                        </div>
+                        <p class="text-[11px] text-[#64748B]">{{ $t('Bu görsel Tsoft\'tan senkronize edilir; buradan değiştirilemez.') }}</p>
+                        <div class="flex items-start gap-3">
+                            <button
+                                v-if="productForm.image_url && !failedImages[productForm.image_url]"
+                                type="button"
+                                class="w-16 h-16 rounded-xl overflow-hidden border border-white/10 bg-[#131722] cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-[#B9FF66]"
+                                :title="$t('Görseli büyüt')"
+                                @click.stop="openLightbox(productForm.image_url)"
+                            >
+                                <img
+                                    :src="productForm.image_url"
+                                    :alt="productForm.name"
+                                    class="w-full h-full object-cover"
+                                    @error="failedImages[productForm.image_url] = true"
+                                />
+                            </button>
+                            <span
+                                v-else
+                                class="w-16 h-16 rounded-xl bg-[#131722] border border-white/10 flex items-center justify-center text-[#64748B] shrink-0"
+                                :title="$t('Görsel yok')"
+                            >
+                                <ImageIcon class="w-7 h-7 stroke-[1.5]" />
+                            </span>
+                            <div class="min-w-0 flex-1 space-y-1">
+                                <p class="text-[11px] text-[#94A3B8] break-all leading-relaxed">{{ productForm.image_url || $t('Görsel yok') }}</p>
+                                <p class="text-[11px] text-[#64748B]">
+                                    {{ $t('Ek görsel sayısı: :count', { count: Array.isArray(productForm.images) ? productForm.images.length : 0 }) }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
                     <div class="sm:col-span-2">
                         <label class="block text-xs font-semibold text-[#94A3B8] tracking-wide mb-1.5">{{ $t('Ürün Adı') }} <span class="text-[#B9FF66]">*</span></label>
                         <input v-model="productForm.name" type="text" :placeholder="$t('Örn: Motor Yağı 4L')" :class="inputClass(productErrors.name)" />
@@ -526,6 +588,20 @@
             </div>
         </div>
 
+        <!-- GÖRSEL LIGHTBOX (tam ekran önizleme, Escape ile kapanır) -->
+        <div v-if="lightboxUrl" class="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm" @click.self="closeLightbox">
+            <button
+                type="button"
+                class="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                :title="$t('Kapat')"
+                @click="closeLightbox"
+            >
+                <X class="w-6 h-6" />
+            </button>
+            <img :src="lightboxUrl" :alt="$t('Görsel')" class="max-w-full max-h-full object-contain rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.9)]" />
+            <p class="absolute bottom-4 left-0 right-0 text-center text-[11px] text-[#94A3B8] px-4 break-all">{{ lightboxUrl }}</p>
+        </div>
+
         <!-- TSOFT GÖNDERİM ÖNİZLEME / ONAY MODALI -->
         <div v-if="tsoftPreview" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs" @click.self="closeTsoftPreview">
             <div class="bg-[#212738] border border-white/15 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-[0_20px_50px_rgba(0,0,0,0.8)] space-y-5 max-h-[90vh] overflow-y-auto">
@@ -639,7 +715,7 @@ import { formatNumber, formatMoney } from '../utils/format';
 import { companySettings, loadCompanySettings } from '../api/settings';
 import {
     Package, Tags, Ruler, Plus, Search, Pencil, Trash2,
-    Check, AlertCircle, AlertTriangle, X, Upload,
+    Check, AlertCircle, AlertTriangle, X, Upload, ImageIcon,
 } from 'lucide-vue-next';
 
 const palette = ['#BC5FCF', '#459BBE', '#DC6F31', '#C55050', '#3D55B6', '#4E956A'];
@@ -675,6 +751,20 @@ function isCritical(p) {
     return Number(p.stock_quantity) < Number(p.min_stock || 0);
 }
 
+// --- Tsoft görselleri (salt okunur) ---
+const failedImages = reactive({});
+const lightboxUrl = ref('');
+function openLightbox(url) {
+    if (!url) return;
+    lightboxUrl.value = url;
+}
+function closeLightbox() {
+    lightboxUrl.value = '';
+}
+function onLightboxKeydown(e) {
+    if (e.key === 'Escape' && lightboxUrl.value) closeLightbox();
+}
+
 // --- Ürün listesi ---
 const products = ref([]);
 const productMeta = ref(null);
@@ -684,7 +774,10 @@ const categoryFilter = ref('');
 const productPage = ref(1);
 let productTimer = null;
 let productsReq = 0;
-onUnmounted(() => clearTimeout(productTimer));
+onUnmounted(() => {
+    clearTimeout(productTimer);
+    window.removeEventListener('keydown', onLightboxKeydown);
+});
 
 async function fetchProducts() {
     const reqId = ++productsReq;
@@ -827,12 +920,14 @@ const productForm = reactive({
     name: '', name_en: '', category_id: null, unit_id: null, sku: '', barcode: '',
     cost_price: '', sale_price: '', currency_code: companySettings.value.currency_code, tax_rate: companySettings.value.default_tax_rate,
     min_stock: '', max_stock: '', track_inventory: true, description: '',
+    image_url: '', images: [], // Tsoft'tan gelir; salt okunur
 });
 function resetProductForm() {
     Object.assign(productForm, {
         name: '', name_en: '', category_id: null, unit_id: null, sku: '', barcode: '',
         cost_price: '', sale_price: '', currency_code: companySettings.value.currency_code, tax_rate: companySettings.value.default_tax_rate,
         min_stock: '', max_stock: '', track_inventory: true, description: '',
+        image_url: '', images: [],
     });
     priceRows.value = fiyatSatirlariUret(productForm.currency_code);
 }
@@ -926,6 +1021,7 @@ function openEdit(p) {
         currency_code: p.currency_code || 'TRY', tax_rate: p.tax_rate ?? 20,
         min_stock: p.min_stock ?? '', max_stock: p.max_stock ?? '', track_inventory: p.track_inventory !== false,
         description: p.description || '',
+        image_url: p.image_url || '', images: Array.isArray(p.images) ? p.images : [],
     });
     fiyatSatirlariniYukle(p);
     productErrors.value = {};
@@ -1086,6 +1182,11 @@ function buildProductPayload() {
     if (productForm.min_stock !== '' && productForm.min_stock !== null) payload.min_stock = productForm.min_stock;
     if (productForm.max_stock !== '' && productForm.max_stock !== null) payload.max_stock = productForm.max_stock;
     if (productForm.description) payload.description = productForm.description;
+    // Tsoft görselleri değiştirilmez; kaydetmede olduğu gibi geri gönderilir.
+    if (editingProduct.value) {
+        if (productForm.image_url) payload.image_url = productForm.image_url;
+        if (Array.isArray(productForm.images)) payload.images = productForm.images;
+    }
     return payload;
 }
 async function submitProduct() {
@@ -1203,6 +1304,7 @@ async function confirmDelete() {
 }
 
 onMounted(async () => {
+    window.addEventListener('keydown', onLightboxKeydown);
     loadCompanySettings(); // urun formunun para birimi ve KDV'si icin
 
     // Hızlı aramadan derin bağlantı: ?search=kalem → liste filtreli açılır.

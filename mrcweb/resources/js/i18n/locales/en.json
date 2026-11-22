@@ -1459,5 +1459,10 @@
   "Tsoft önizlemesi yüklenemedi.": "Tsoft preview could not be loaded.",
   "Tsoft yazımı atlandı (önizleme modu).": "Tsoft write skipped (preview mode).",
   "Ürün Tsoft'a gönderildi.": "Product sent to Tsoft.",
-  "Ürün Tsoft'a gönderilemedi.": "Product could not be sent to Tsoft."
+  "Ürün Tsoft'a gönderilemedi.": "Product could not be sent to Tsoft.",
+  "Görseli büyüt": "Enlarge image",
+  "Görsel yok": "No image",
+  "Tsoft Görseli": "Tsoft image",
+  "Bu görsel Tsoft'tan senkronize edilir; buradan değiştirilemez.": "This image is synced from Tsoft; it cannot be changed here.",
+  "Ek görsel sayısı: :count": "Additional images: :count"
 }

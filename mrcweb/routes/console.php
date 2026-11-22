@@ -57,3 +57,5 @@ Schedule::command('integration:tsoft-pull-catalog')->hourly()->withoutOverlappin
 Schedule::command('integration:reconcile-orders')->dailyAt('03:15')->withoutOverlapping()->onOneServer();
 Schedule::command('integration:accountant-reconcile')->weeklyOn(1, '04:00')->withoutOverlapping()->onOneServer();
 Schedule::command('integration:tsoft-writeback')->everyTenMinutes()->withoutOverlapping()->onOneServer();
+// Günlük artımlı ürün adı çevirisi (yeni ürünler için); toplu çalıştırma elle yapılır.
+Schedule::command('integration:translate-product-names --limit=100')->dailyAt('05:00')->withoutOverlapping()->onOneServer();

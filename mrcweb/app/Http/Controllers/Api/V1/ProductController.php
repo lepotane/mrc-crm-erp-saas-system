@@ -363,6 +363,9 @@ class ProductController extends Controller
             'sku' => ['nullable', 'string', 'max:64'],
             'barcode' => ['nullable', 'string', 'max:64'],
             'description' => ['nullable', 'string', 'max:2000'],
+            // Görseller Tsoft'tan senkronize edilir; MRC yalnızca okur ve saklar.
+            'image_url' => ['nullable', 'string', 'max:500'],
+            'images' => ['nullable', 'array'],
             'cost_price' => ['nullable', 'numeric', 'min:0'],
             'sale_price' => ['nullable', 'numeric', 'min:0'],
             'currency_code' => ['nullable', 'string', Rule::in(Currency::activeCodes())],
@@ -393,7 +396,7 @@ class ProductController extends Controller
     {
         $data = $product->only([
             'id', 'company_id', 'category_id', 'unit_id', 'name', 'name_en', 'sku', 'barcode',
-            'description', 'cost_price', 'sale_price', 'currency_code', 'tax_rate',
+            'description', 'image_url', 'images', 'cost_price', 'sale_price', 'currency_code', 'tax_rate',
             'track_inventory', 'min_stock', 'max_stock', 'stock_quantity', 'created_at',
         ]);
 

@@ -55,4 +55,11 @@ return [
         'tolerance_seconds' => (int) env('MRC_WEBHOOK_TOLERANCE', 300),
         'dedupe_hours' => (int) env('MRC_WEBHOOK_DEDUPE_HOURS', 24),
     ],
+
+    // Ürün adı çevirisi (MyMemory — salt okunur, Tsoft'a yazmaz).
+    'translation' => [
+        'provider' => env('MRC_TRANSLATION_PROVIDER', 'mymemory'),
+        'email' => env('MRC_TRANSLATION_EMAIL', 'info@mrc.local'),
+        'delay_ms' => (int) env('MRC_TRANSLATION_DELAY_MS', 120),
+    ],
 ];
