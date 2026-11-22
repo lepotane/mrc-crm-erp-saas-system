@@ -1522,5 +1522,14 @@
   "Bildirimleri aç": "Turn on notifications",
   "Hızlı tara kartını aç": "Show quick scan card",
   "Hızlı İşlemler": "Quick Actions",
-  "Kartı kapat": "Hide card"
+  "Kartı kapat": "Hide card",
+  "Uygulama": "App",
+  "Mobil uygulama ve bildirim tercihleri": "Mobile app and notification preferences",
+  "Hızlı barkod tarama": "Quick barcode scan",
+  "Kartı aç/kapat (tercih bu cihazda saklanır)": "Show/hide the card (saved on this device)",
+  "Açık": "On",
+  "Hata ve kritik stok uyarıları": "Error and low-stock alerts",
+  "Çevrimdışı taslaklar": "Offline drafts",
+  "Bağlantı yokken kaydedilen işlemler": "Actions saved while offline",
+  "Hızlı tarama kartı ve bildirim düğmesi artık ekranda sabit durmaz; buradan yönetilirsin.": "The quick scan card and notification button no longer stay on screen; manage them here."
 }

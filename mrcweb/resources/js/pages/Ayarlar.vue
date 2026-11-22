@@ -365,6 +365,72 @@
             <ModulesCard />
             </template>
 
+            <template v-if="activeTab === 'uygulama'">
+            <!-- Mobil uygulama (PWA) tercihleri: sağ altta yüzen öğe yok -->
+            <Card rounded="2xl" padding="lg">
+                <div class="flex items-center justify-between pb-4 border-b border-white/[0.08] mb-5">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-[#B9FF66]/15 text-[#B9FF66] flex items-center justify-center">
+                            <ScanBarcode class="w-5 h-5" />
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-bold text-white tracking-tight">{{ $t('Uygulama') }}</h2>
+                            <p class="text-xs text-[#94A3B8]">{{ $t('Mobil uygulama ve bildirim tercihleri') }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <button
+                        type="button"
+                        class="w-full flex items-center justify-between p-4 rounded-xl bg-[#131722] border border-white/10 hover:border-[#B9FF66]/40 text-left cursor-pointer"
+                        @click="setQuickScanEnabled(!quickScanEnabled)"
+                    >
+                        <span>
+                            <span class="block text-sm font-bold text-white">{{ $t('Hızlı barkod tarama') }}</span>
+                            <span class="block text-xs text-[#94A3B8] mt-1">{{ $t('Kartı aç/kapat (tercih bu cihazda saklanır)') }}</span>
+                        </span>
+                        <span
+                            class="px-3 py-1 rounded-full text-[11px] font-black"
+                            :class="quickScanEnabled ? 'bg-[#B9FF66] text-[#131722]' : 'bg-white/10 text-[#94A3B8]'"
+                        >
+                            {{ quickScanEnabled ? $t('Açık') : $t('Kapalı') }}
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        class="w-full flex items-center justify-between p-4 rounded-xl bg-[#131722] border border-white/10 hover:border-[#B9FF66]/40 text-left cursor-pointer"
+                        @click="askNotifyPermission"
+                    >
+                        <span>
+                            <span class="block text-sm font-bold text-white">{{ $t('Bildirimler') }}</span>
+                            <span class="block text-xs text-[#94A3B8] mt-1">{{ $t('Hata ve kritik stok uyarıları') }}</span>
+                        </span>
+                        <span class="px-3 py-1 rounded-full text-[11px] font-black bg-[#B9FF66]/15 text-[#B9FF66]">
+                            {{ appNotifyStatus }}
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        class="w-full flex items-center justify-between p-4 rounded-xl bg-[#131722] border border-white/10 hover:border-[#B9FF66]/40 text-left cursor-pointer"
+                        @click="draftsOpen = true"
+                    >
+                        <span>
+                            <span class="block text-sm font-bold text-white">{{ $t('Çevrimdışı taslaklar') }}</span>
+                            <span class="block text-xs text-[#94A3B8] mt-1">{{ $t('Bağlantı yokken kaydedilen işlemler') }}</span>
+                        </span>
+                        <span class="px-3 py-1 rounded-full text-[11px] font-black bg-white/10 text-[#94A3B8]">{{ $t('Görüntüle') }}</span>
+                    </button>
+
+                    <p class="text-[11px] text-[#64748B]">
+                        {{ $t('Hızlı tarama kartı ve bildirim düğmesi artık ekranda sabit durmaz; buradan yönetilirsin.') }}
+                    </p>
+                </div>
+            </Card>
+            </template>
+
             <template v-if="activeTab === 'yazici'">
             <!-- Yazıcı köprüsü : cihaz eşleştirme + kuyruk takibi. -->
             <DevicesCard />
@@ -522,6 +588,14 @@ import TwoFactorCard from '../components/account/TwoFactorCard.vue';
 import CurrencyCard from '../components/account/CurrencyCard.vue';
 import ModulesCard from '../components/account/ModulesCard.vue';
 import DevicesCard from '../components/account/DevicesCard.vue';
+import { ScanBarcode } from 'lucide-vue-next';
+import {
+    quickScanEnabled,
+    setQuickScanEnabled,
+    draftsOpen,
+    requestNotifyPermission,
+    getNotifyPermission,
+} from '../composables/usePwa';
 import client from '../api/client';
 import { useAuthStore } from '../stores/auth';
 import { t, locale, setLocale } from '../i18n';
@@ -543,6 +617,12 @@ const authStore = useAuthStore();
 const loadingInitial = ref(true);
 // Sekmeler (kartlar gruplara ayrılır; kayıt mantığı kartların içinde aynen durur).
 const activeTab = ref('firma');
+const appNotifyStatus = ref(getNotifyPermission());
+
+async function askNotifyPermission() {
+    await requestNotifyPermission();
+    appNotifyStatus.value = getNotifyPermission();
+}
 const settingTabs = [
     { value: 'firma', key: 'Firma' },
     { value: 'genel', key: 'Genel' },
@@ -552,6 +632,7 @@ const settingTabs = [
     { value: 'modul', key: 'Modüller' },
     { value: 'yazici', key: 'Yazıcılar' },
     { value: 'guvenlik', key: 'Güvenlik' },
+    { value: 'uygulama', key: 'Uygulama' },
 ];
 const companySaving = ref(false);
 const settingsSaving = ref(false);

@@ -24,6 +24,8 @@ export const isOnline = ref(typeof navigator === 'undefined' ? true : navigator.
 export const isInstallable = ref(false);
 /** Hızlı barkod kartı kullanıcı tarafından kapatılabilir (kalıcı tercih). */
 export const quickScanEnabled = ref(readQuickScanEnabled());
+/** Çevrimdışı taslak modalı Ayarlar > Uygulama'dan da açılabilir. */
+export const draftsOpen = ref(false);
 
 export function setQuickScanEnabled(enabled) {
     quickScanEnabled.value = Boolean(enabled);
@@ -230,6 +232,7 @@ export function usePwa() {
         isInstallable,
         quickScanEnabled,
         setQuickScanEnabled,
+        draftsOpen,
         promptInstall,
         requestNotifyPermission,
         getNotifyPermission,

@@ -85,73 +85,8 @@
         </div>
     </div>
 
-    <!-- PWA hızlı işlem yığını (yalnızca giriş yapmışken) -->
-    <div
-        v-if="showPwaUi"
-        class="fixed bottom-20 right-4 lg:bottom-6 lg:right-6 z-[50] flex flex-col items-end gap-2 pointer-events-none"
-    >
-        <div v-if="quickScanEnabled" class="pointer-events-auto">
-            <QuickScanCard @disable="setQuickScanEnabled(false)" />
-        </div>
-
-        <button
-            v-else
-            type="button"
-            class="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-full bg-[#212738]/95 backdrop-blur-md border border-white/10 text-[#94A3B8] text-[11px] font-bold shadow-lg hover:text-white"
-            :title="$t('Hızlı tara kartını aç')"
-            @click="setQuickScanEnabled(true)"
-        >
-            <ScanBarcode class="w-4 h-4" />
-            {{ $t('Hızlı Tara') }}
-        </button>
-
-        <button
-            v-if="notifyPermission !== 'granted' && notifyPermission !== 'unsupported'"
-            type="button"
-            class="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-full bg-[#212738]/95 backdrop-blur-md border border-[#B9FF66]/30 text-[#B9FF66] text-[11px] font-bold shadow-lg"
-            :title="$t('Bildirimleri aç')"
-            @click="openNotifyPrompt"
-        >
-            <BellRing class="w-4 h-4" />
-            {{ $t('Bildirimler') }}
-        </button>
-
-        <button
-            v-if="drafts.length"
-            type="button"
-            class="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-full bg-[#212738]/95 backdrop-blur-md border border-[#DC6F31]/40 text-[#FDBA74] text-xs font-bold shadow-lg hover:bg-[#282F44]"
-            @click="draftsOpen = true"
-        >
-            <FileClock class="w-4 h-4" />
-            <span>{{ $t('Taslaklar') }}</span>
-            <span class="px-1.5 rounded-full bg-[#DC6F31]/25 text-[10px]">{{ drafts.length }}</span>
-        </button>
-
-        <div
-            v-if="isInstallable && !installDismissed"
-            class="pointer-events-auto w-56 max-w-full rounded-2xl bg-[#212738]/95 backdrop-blur-md border border-white/15 shadow-lg p-3"
-        >
-            <div class="flex items-start justify-between gap-2">
-                <p class="text-xs font-bold text-white leading-snug">{{ $t('Uygulama olarak kur') }}</p>
-                <button
-                    type="button"
-                    class="shrink-0 text-[#64748B] hover:text-white"
-                    :title="$t('Kapat')"
-                    @click="installDismissed = true"
-                >
-                    <X class="w-3.5 h-3.5" />
-                </button>
-            </div>
-            <button
-                type="button"
-                class="mt-2.5 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-full bg-[#B9FF66] text-[#131722] text-[11px] font-black hover:bg-[#a6f050]"
-                @click="installApp"
-            >
-                <Download class="w-3.5 h-3.5" />
-                {{ $t('Uygulama olarak kur') }}
-            </button>
-        </div>
-    </div>
+    <!-- PWA kontrolleri sağ altta yüzen olarak DURMAZ; Ayarlar > Uygulama
+         sekmesinden yönetilir. Ekranda sabit bir düğme/kart kalmaz. -->
 
     <OfflineDraftsModal
         :open="draftsOpen"
@@ -162,22 +97,17 @@
 </template>
 
 <script setup>
-import { ref, computed, provide, watch, onMounted, onUnmounted } from 'vue';
-import { RouterView, useRoute } from 'vue-router';
-import { WifiOff, Wifi, FileClock, X, BellRing, Download, ScanBarcode } from 'lucide-vue-next';
+import { ref, provide, watch, onMounted, onUnmounted } from 'vue';
+import { RouterView } from 'vue-router';
+import { WifiOff, Wifi, X, BellRing } from 'lucide-vue-next';
 import client from './api/client';
 import router from './router';
 import { useAuthStore } from './stores/auth';
 import { t } from './i18n';
 import OfflineDraftsModal from './components/pwa/OfflineDraftsModal.vue';
-import QuickScanCard from './components/pwa/QuickScanCard.vue';
 import {
     usePwa,
     isOnline,
-    isInstallable,
-    quickScanEnabled,
-    setQuickScanEnabled,
-    promptInstall,
     requestNotifyPermission,
     getNotifyPermission,
     notify,
@@ -192,7 +122,6 @@ import {
 // online/offline + beforeinstallprompt dinleyicilerini bir kez kurar.
 usePwa();
 
-const route = useRoute();
 const authStore = useAuthStore();
 
 const drafts = ref([]);
@@ -200,18 +129,7 @@ const draftsOpen = ref(false);
 const showNotifyPrompt = ref(false);
 // Reaktif izin durumu: izin verildikten sonra sağ alttaki chip anında kaybolur.
 const notifyPermission = ref(getNotifyPermission());
-const installDismissed = ref(false);
 const onlineBannerDismissed = ref(false);
-
-const GUEST_ROUTES = ['/login', '/register', '/sifremi-unuttum', '/sifre-sifirla', '/dogrulandi'];
-const showPwaUi = computed(() => {
-    if (GUEST_ROUTES.includes(route.path)) return false;
-    try {
-        return !!localStorage.getItem('mrc_token');
-    } catch {
-        return false;
-    }
-});
 
 function refreshDrafts() {
     drafts.value = loadDrafts();
@@ -287,14 +205,6 @@ async function allowNotifications() {
 function skipNotifications() {
     markNotifyPromptSeen();
     showNotifyPrompt.value = false;
-}
-
-function openNotifyPrompt() {
-    showNotifyPrompt.value = true;
-}
-
-async function installApp() {
-    await promptInstall();
 }
 
 // GERÇEK WEB PUSH DEĞİL: yalnızca yerel uyarı. Sunucudan push almak için
