@@ -24,7 +24,9 @@ final class GoogleTranslator
 
         try {
             $response = Http::timeout(20)->get(self::ENDPOINT, [
-                'client' => 'gtx',
+                // 'chrome' istemcisi 'gtx'den daha az rate-limit'e takılıyor
+                // (canlı sunucuda gtx 429 dönerken chrome 200 döndü).
+                'client' => 'chrome',
                 'sl' => 'en',
                 'tl' => 'tr',
                 'dt' => 't',
