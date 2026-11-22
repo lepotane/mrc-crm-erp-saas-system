@@ -1517,5 +1517,10 @@
   "Hiç çalışmadı": "Never ran",
   "dk önce": "min ago",
   "Henüz senkronizasyon kaydı yok.": "No sync records yet.",
-  "Son çalışmalar entegrasyon günlüğünden okunur.": "Last runs are read from the integration log."
+  "Son çalışmalar entegrasyon günlüğünden okunur.": "Last runs are read from the integration log.",
+  "Hata ve kritik stok uyarılarını telefonunda gör.": "Get error and low-stock alerts on your phone.",
+  "Bildirimleri aç": "Turn on notifications",
+  "Hızlı tara kartını aç": "Show quick scan card",
+  "Hızlı İşlemler": "Quick Actions",
+  "Kartı kapat": "Hide card"
 }

@@ -43,35 +43,44 @@
         </button>
     </div>
 
-    <!-- İlk girişte bildirim izni: engelleyici değil, kullanıcı geçebilir -->
+    <!-- İlk girişte bildirim izni: merkezi modal, her şeyin üstünde -->
     <div
         v-if="showNotifyPrompt"
-        class="fixed bottom-20 left-4 lg:bottom-6 lg:left-20 z-[60] w-[min(20rem,calc(100vw-2rem))] rounded-2xl bg-[#212738]/95 backdrop-blur-xl border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-4"
+        class="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        @click.self="skipNotifications"
     >
-        <div class="flex items-start gap-3">
-            <div class="w-9 h-9 rounded-xl bg-[#B9FF66]/15 text-[#B9FF66] flex items-center justify-center shrink-0">
-                <BellRing class="w-4 h-4" />
-            </div>
-            <div class="min-w-0 flex-1">
-                <p class="text-xs font-bold text-white leading-snug">
-                    {{ $t('Bildirimleri açmak ister misiniz?') }}
-                </p>
-                <div class="flex gap-2 mt-3">
-                    <button
-                        type="button"
-                        class="px-3 py-1.5 rounded-full bg-[#B9FF66] text-[#131722] text-[11px] font-black hover:bg-[#a6f050]"
-                        @click="allowNotifications"
-                    >
-                        {{ $t('İzin ver') }}
-                    </button>
-                    <button
-                        type="button"
-                        class="px-3 py-1.5 rounded-full bg-white/5 text-[#94A3B8] text-[11px] font-bold hover:text-white hover:bg-white/10"
-                        @click="skipNotifications"
-                    >
-                        {{ $t('Şimdi değil') }}
-                    </button>
+        <div class="w-full max-w-sm rounded-2xl bg-[#212738] border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-5">
+            <div class="flex items-start gap-3">
+                <div class="w-10 h-10 rounded-xl bg-[#B9FF66]/15 text-[#B9FF66] flex items-center justify-center shrink-0">
+                    <BellRing class="w-5 h-5" />
                 </div>
+                <div class="min-w-0 flex-1">
+                    <p class="text-sm font-black text-white leading-snug">
+                        {{ $t('Bildirimleri açmak ister misiniz?') }}
+                    </p>
+                    <p class="text-[11px] text-[#94A3B8] mt-1">
+                        {{ $t('Hata ve kritik stok uyarılarını telefonunda gör.') }}
+                    </p>
+                </div>
+                <button type="button" class="p-1 text-[#64748B] hover:text-white" :title="$t('Kapat')" @click="skipNotifications">
+                    <X class="w-4 h-4" />
+                </button>
+            </div>
+            <div class="flex gap-2 mt-5">
+                <button
+                    type="button"
+                    class="flex-1 px-4 py-2.5 rounded-full bg-[#B9FF66] text-[#131722] text-xs font-black hover:bg-[#a6f050] cursor-pointer"
+                    @click="allowNotifications"
+                >
+                    {{ $t('İzin ver') }}
+                </button>
+                <button
+                    type="button"
+                    class="flex-1 px-4 py-2.5 rounded-full bg-white/5 text-[#94A3B8] text-xs font-bold hover:text-white hover:bg-white/10 cursor-pointer"
+                    @click="skipNotifications"
+                >
+                    {{ $t('Şimdi değil') }}
+                </button>
             </div>
         </div>
     </div>
@@ -81,9 +90,31 @@
         v-if="showPwaUi"
         class="fixed bottom-20 right-4 lg:bottom-6 lg:right-6 z-[50] flex flex-col items-end gap-2 pointer-events-none"
     >
-        <div class="pointer-events-auto">
-            <QuickScanCard />
+        <div v-if="quickScanEnabled" class="pointer-events-auto">
+            <QuickScanCard @disable="setQuickScanEnabled(false)" />
         </div>
+
+        <button
+            v-else
+            type="button"
+            class="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-full bg-[#212738]/95 backdrop-blur-md border border-white/10 text-[#94A3B8] text-[11px] font-bold shadow-lg hover:text-white"
+            :title="$t('Hızlı tara kartını aç')"
+            @click="setQuickScanEnabled(true)"
+        >
+            <ScanBarcode class="w-4 h-4" />
+            {{ $t('Hızlı Tara') }}
+        </button>
+
+        <button
+            v-if="getNotifyPermission() !== 'granted'"
+            type="button"
+            class="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-full bg-[#212738]/95 backdrop-blur-md border border-[#B9FF66]/30 text-[#B9FF66] text-[11px] font-bold shadow-lg"
+            :title="$t('Bildirimleri aç')"
+            @click="openNotifyPrompt"
+        >
+            <BellRing class="w-4 h-4" />
+            {{ $t('Bildirimler') }}
+        </button>
 
         <button
             v-if="drafts.length"
@@ -133,7 +164,7 @@
 <script setup>
 import { ref, computed, provide, watch, onMounted, onUnmounted } from 'vue';
 import { RouterView, useRoute } from 'vue-router';
-import { WifiOff, Wifi, FileClock, X, BellRing, Download } from 'lucide-vue-next';
+import { WifiOff, Wifi, FileClock, X, BellRing, Download, ScanBarcode } from 'lucide-vue-next';
 import client from './api/client';
 import router from './router';
 import { useAuthStore } from './stores/auth';
@@ -144,6 +175,8 @@ import {
     usePwa,
     isOnline,
     isInstallable,
+    quickScanEnabled,
+    setQuickScanEnabled,
     promptInstall,
     requestNotifyPermission,
     getNotifyPermission,
@@ -239,14 +272,20 @@ function syncScope() {
 }
 
 async function allowNotifications() {
-    await requestNotifyPermission();
-    markNotifyPromptSeen();
+    // Önce kapat: izin isteği bazı tarayıcılarda (PWA standalone) yavaş veya
+    // sessiz yanıt verir; buton donmuş görünmesin.
     showNotifyPrompt.value = false;
+    markNotifyPromptSeen();
+    try { await requestNotifyPermission(); } catch { /* sessiz */ }
 }
 
 function skipNotifications() {
     markNotifyPromptSeen();
     showNotifyPrompt.value = false;
+}
+
+function openNotifyPrompt() {
+    showNotifyPrompt.value = true;
 }
 
 async function installApp() {

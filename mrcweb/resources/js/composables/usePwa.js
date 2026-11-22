@@ -14,9 +14,21 @@ import { ref } from 'vue';
 const DRAFTS_KEY = 'mrc_offline_drafts';
 const SCOPE_KEY = 'mrc_pwa_draft_scope';
 const NOTIFY_PROMPT_KEY = 'mrc_pwa_notify_prompt_seen';
+const QUICK_SCAN_KEY = 'mrc_pwa_quick_scan_enabled';
+
+function readQuickScanEnabled() {
+    try { return localStorage.getItem(QUICK_SCAN_KEY) !== '0'; } catch { return true; }
+}
 
 export const isOnline = ref(typeof navigator === 'undefined' ? true : navigator.onLine !== false);
 export const isInstallable = ref(false);
+/** Hızlı barkod kartı kullanıcı tarafından kapatılabilir (kalıcı tercih). */
+export const quickScanEnabled = ref(readQuickScanEnabled());
+
+export function setQuickScanEnabled(enabled) {
+    quickScanEnabled.value = Boolean(enabled);
+    try { localStorage.setItem(QUICK_SCAN_KEY, enabled ? '1' : '0'); } catch { /* depolama kapalı */ }
+}
 
 let deferredPrompt = null;
 let listenersReady = false;
@@ -216,6 +228,8 @@ export function usePwa() {
     return {
         isOnline,
         isInstallable,
+        quickScanEnabled,
+        setQuickScanEnabled,
         promptInstall,
         requestNotifyPermission,
         getNotifyPermission,

@@ -3,6 +3,17 @@
      Okunan ürün/QR değeri mevcut 'urunler' / 'stok' rotalarına search sorgusuyla taşınır. -->
 <template>
     <Card rounded="2xl" padding="sm" class="w-56 max-w-full">
+        <div class="flex items-center justify-between px-1 pb-1">
+            <span class="text-[9px] font-bold uppercase tracking-widest text-[#64748B]">{{ $t('Hızlı İşlemler') }}</span>
+            <button
+                type="button"
+                class="p-1 rounded-md text-[#64748B] hover:text-white hover:bg-white/10 cursor-pointer"
+                :title="$t('Kartı kapat')"
+                @click="$emit('disable')"
+            >
+                <X class="w-3.5 h-3.5" />
+            </button>
+        </div>
         <button
             type="button"
             class="w-full flex items-center gap-3 p-1.5 text-left rounded-xl hover:bg-white/5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#B9FF66]"
@@ -47,9 +58,11 @@
 <script setup>
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ScanBarcode } from 'lucide-vue-next';
+import { ScanBarcode, X } from 'lucide-vue-next';
 import Card from '../ui/Card.vue';
 import BarcodeScanner from '../BarcodeScanner.vue';
+
+defineEmits(['disable']);
 
 const router = useRouter();
 const open = ref(false);
